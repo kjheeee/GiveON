@@ -1,0 +1,13 @@
+services:
+  bot:
+    build: .
+    restart: unless-stopped
+    init: true
+    env_file: .env
+    environment:
+      DATABASE_PATH: /app/data/giveaway.sqlite
+    volumes:
+      - giveaway-data:/app/data
+    # SQLite 파일 하나에는 프로세스 하나만 실행합니다.
+volumes:
+  giveaway-data:
