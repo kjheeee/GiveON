@@ -48,7 +48,7 @@ export class DiscordTransport {
         { name: '참여 거절 역할', value: roles(event.deny_roles) },
       ).setFooter({ text: `GiveON · 이벤트 ${event.id}` });
     if (event.ends_at) embed.addFields({ name: '참여 마감', value: time(event.ends_at) });
-    if (event.proof_required) embed.addFields({ name: '수령 전 인증 필요', value: `${event.proof_instructions}\n수령 버튼을 누른 후 5분 내 텍스트·이미지를 제출해주세요.` });
+    if (event.proof_required) embed.addFields({ name: '수령 전 인증 필요', value: event.proof_instructions },{name:'인증 제출 기한',value:'수령 버튼을 누른 후 5분 내 텍스트·이미지를 제출해주세요.'});
     return embed;
   }
   eventComponents(event) {

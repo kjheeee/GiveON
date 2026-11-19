@@ -1,6 +1,6 @@
 {
   "name": "giveon-discord-bot",
-  "version": "1.5.0",
+  "version": "1.5.1",
   "private": true,
   "description": "승인·인증·개별 상품 지급을 지원하는 SQLite/MySQL 디스코드 이벤트 봇",
   "type": "module",

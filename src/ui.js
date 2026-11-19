@@ -76,8 +76,8 @@ export function listView(title,rows,page,prefix,optionPrefix,format) {
   nav.push(btn('ui:home','닫기',ButtonStyle.Secondary)); components.push(row(...nav));
   return payload(`**${title} · ${page+1}페이지**\n${shown.length ? '아래 목록에서 선택하세요.' : '표시할 항목이 없어요.'}`,components);
 }
-export function eventView(engine,transport,guildId,actor,eventId) {
-  const event=engine.event(eventId,guildId), own=event.owner_id===actor.userId, manager=engine.manager(guildId,actor);
+export function eventView(engine,transport,guildId,actor,eventId,page=0) {
+  const event=engine.visibleEvent(guildId,actor,eventId), own=event.owner_id===actor.userId, manager=engine.manager(guildId,actor);
   const components=[];
   const count=engine.store.get('SELECT count(*) n FROM prizes WHERE event_id=? AND secret IS NOT NULL',eventId).n;
   if (own && event.status==='DRAFT') components.push(row(
@@ -91,8 +91,18 @@ export function eventView(engine,transport,guildId,actor,eventId) {
   if (own && ['COMPLETED','CANCELLED','REJECTED'].includes(event.status)) management.push(btn(`ui:recover:${eventId}`,'미지급 상품 회수'));
   if ((own||manager) && !['COMPLETED','CANCELLED'].includes(event.status)) management.push(btn(`ui:cancel:${eventId}`,'이벤트 취소',ButtonStyle.Danger));
   if (management.length) components.push(row(...management));
+  const embed=transport.eventEmbed(event);
+  if(event.public_message_id) {
+    const people=engine.participants(guildId,actor,eventId,page);
+    embed.addFields({name:`참여자 목록 · 총 ${people.total}명 · ${people.page+1}/${people.pages}페이지`,
+      value:people.users.length?people.users.map((id,index)=>`${people.page*25+index+1}. <@${id}>`).join('\n'):'아직 참여자가 없어요.'});
+    const nav=[];
+    if(people.page>0)nav.push(btn(`ui:event:${eventId}:${people.page-1}`,'이전',ButtonStyle.Secondary));
+    if(people.page+1<people.pages)nav.push(btn(`ui:event:${eventId}:${people.page+1}`,'다음',ButtonStyle.Secondary));
+    nav.push(btn(`ui:event:${eventId}:${people.page}`,'새로고침',ButtonStyle.Secondary));components.push(row(...nav));
+  }
   components.push(back());
-  return payload(`이벤트 번호: ${eventId}${own||manager ? `\n보관 중인 상품: ${count}건` : ''}${event.rejection_reason ? `\n거절 사유: ${event.rejection_reason}` : ''}`,components,[transport.eventEmbed(event)]);
+  return payload(`이벤트 번호: ${eventId}${own||manager ? `\n보관 중인 상품: ${count}건` : ''}${event.rejection_reason ? `\n거절 사유: ${event.rejection_reason}` : ''}`,components,[embed]);
 }
 export function claimView(engine,guildId,actor,claimId,managerView=false) {
   const {claim,event}=engine.claim(claimId,guildId);

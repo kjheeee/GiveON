@@ -27,10 +27,9 @@ export function handler(engine,transport) {
     requireThat(value.claim.user_id===actor.userId,'당첨자 본인만 사용할 수 있어요.');
     return value;
   };
-  const renderEvent=async(i,a,eid) => {
-    const e=engine.event(eid,i.guildId);
-    requireThat(e.owner_id===a.userId||engine.manager(i.guildId,a)||['RUNNING','DRAWN','COMPLETED'].includes(e.status),'이 이벤트를 조회할 수 없어요.');
-    return respond(i,e.status==='DRAFT'&&e.owner_id===a.userId?await flow.view(i.guildId,a,eid):eventView(engine,transport,i.guildId,a,eid));
+  const renderEvent=async(i,a,eid,page=0) => {
+    const e=engine.visibleEvent(i.guildId,a,eid);
+    return respond(i,e.status==='DRAFT'&&e.owner_id===a.userId?await flow.view(i.guildId,a,eid):eventView(engine,transport,i.guildId,a,eid,page));
   };
   const renderClaim=(i,a,cid,manage=false) => {
     if (manage) engine.requireManager(i.guildId,a); else own(i.guildId,a,cid);
@@ -258,7 +257,7 @@ export function handler(engine,transport) {
       if (['mine','events','pending'].includes(action)) return eventsList(i,a,action,pageNumber(arg));
       if (['wins','reviews','issues'].includes(action)) return claimsList(i,a,action,pageNumber(arg));
       if (action==='eventclaims') return claimsList(i,a,action,pageNumber(extra),arg);
-      if (action==='event') return await renderEvent(i,a,arg);
+      if (action==='event') return await renderEvent(i,a,arg,pageNumber(extra));
       if (action==='admin') return adminView(i,a);
       if (action==='channels') return settingsView(i,a);
       if (action==='rolehome') {

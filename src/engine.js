@@ -28,6 +28,19 @@ export class Engine {
     if (!event || event.guild_id !== guildId) fail('이 서버의 이벤트를 찾을 수 없어요.');
     return event;
   }
+  visibleEvent(guildId,actor,eventId) {
+    const event=this.event(eventId,guildId);
+    if(event.owner_id!==actor.userId&&!this.manager(guildId,actor)&&!(event.public_message_id&&['RUNNING','DRAWN','COMPLETED','CANCELLED'].includes(event.status)))fail('이 이벤트를 조회할 수 없어요.');
+    return event;
+  }
+  participants(guildId,actor,eventId,page=0) {
+    this.guard();this.visibleEvent(guildId,actor,eventId);
+    if(!Number.isSafeInteger(page)||page<0)fail('참여자 페이지 번호가 잘못되었어요.');
+    const total=this.store.get('SELECT count(*) n FROM entries WHERE event_id=?',eventId).n;
+    const pages=Math.max(1,Math.ceil(total/25)),current=Math.min(page,pages-1);
+    const users=this.store.all('SELECT user_id FROM entries WHERE event_id=? ORDER BY joined_at,user_id LIMIT 25 OFFSET ?',eventId,current*25).map(row=>row.user_id);
+    return {total,page:current,pages,users};
+  }
   claim(claimId, guildId) {
     const claim = this.store.claim(claimId);
     if (!claim) fail('당첨 정보를 찾을 수 없어요.');
