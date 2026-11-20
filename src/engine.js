@@ -1,7 +1,7 @@
 import { randomBytes } from 'node:crypto';
 import { draw } from './draw.js';
 import { isDirect,deliverySummary,productInfo } from './delivery.js';
-import { DEFAULT_TIME_LIMITS } from './time-limits.js';
+import { DEFAULT_TIME_LIMITS,timeRangeText } from './time-limits.js';
 
 export const PROOF_MS = 5 * 60_000;
 export const HOST_NOTICE_KINDS = new Set(['hostCreated','hostStarted','hostReceived']);
@@ -135,8 +135,8 @@ export class Engine {
   setTimeLimits(guildId,actor,limits) {
     this.guard();this.requireManager(guildId,actor);
     if(!limits||Object.keys(limits).length!==4||Object.keys(DEFAULT_TIME_LIMITS).some(key=>!Number.isSafeInteger(limits[key])))fail('시간 범위 네 가지를 분 단위 정수로 입력해주세요.');
-    if(limits.duration_min<1||limits.duration_max>DEFAULT_TIME_LIMITS.duration_max||limits.duration_min>limits.duration_max)fail('진행 시간은 1~43200분 안에서 최소 ≤ 최대로 설정해주세요.');
-    if(limits.claim_min<1||limits.claim_max>DEFAULT_TIME_LIMITS.claim_max||limits.claim_min>limits.claim_max)fail('수령 시간은 1~10080분 안에서 최소 ≤ 최대로 설정해주세요.');
+    if(limits.duration_min<1||limits.duration_max>DEFAULT_TIME_LIMITS.duration_max||limits.duration_min>limits.duration_max)fail('진행 시간은 1분~30일 안에서 최소 ≤ 최대로 설정해주세요. 입력 단위는 분이에요.');
+    if(limits.claim_min<1||limits.claim_max>DEFAULT_TIME_LIMITS.claim_max||limits.claim_min>limits.claim_max)fail('수령 시간은 1분~7일 안에서 최소 ≤ 최대로 설정해주세요. 입력 단위는 분이에요.');
     this.store.guild(guildId);
     this.store.run(`INSERT INTO guild_time_limits(guild_id,duration_min,duration_max,claim_min,claim_max,updated_by,updated_at) VALUES (?,?,?,?,?,?,?)
       ON CONFLICT(guild_id) DO UPDATE SET duration_min=excluded.duration_min,duration_max=excluded.duration_max,claim_min=excluded.claim_min,claim_max=excluded.claim_max,updated_by=excluded.updated_by,updated_at=excluded.updated_at`,
@@ -145,8 +145,8 @@ export class Engine {
   validateTimes(guildId,durationMinutes,claimMinutes,pending=false) {
     const limits=this.timeLimits(guildId);
     const guidance=pending?'승인 대기 신청을 취소한 뒤 다시 신청해주세요.':'기본 정보를 수정해주세요.';
-    if(!Number.isSafeInteger(durationMinutes)||durationMinutes<limits.duration_min||durationMinutes>limits.duration_max)fail(`이 서버의 진행 시간은 ${limits.duration_min}~${limits.duration_max}분이에요. ${guidance}`);
-    if(!Number.isSafeInteger(claimMinutes)||claimMinutes<limits.claim_min||claimMinutes>limits.claim_max)fail(`이 서버의 수령 시간은 ${limits.claim_min}~${limits.claim_max}분이에요. ${guidance}`);
+    if(!Number.isSafeInteger(durationMinutes)||durationMinutes<limits.duration_min||durationMinutes>limits.duration_max)fail(`이 서버의 진행 시간은 ${timeRangeText(limits.duration_min,limits.duration_max)}이에요. ${guidance}`);
+    if(!Number.isSafeInteger(claimMinutes)||claimMinutes<limits.claim_min||claimMinutes>limits.claim_max)fail(`이 서버의 수령 시간은 ${timeRangeText(limits.claim_min,limits.claim_max)}이에요. ${guidance}`);
   }
   create(guildId, actor, options) {
     this.guard();
@@ -606,7 +606,7 @@ export class Engine {
   }
   queueApplicationUpdate(eventId) {
     const event=this.store.event(eventId),application=this.store.get("SELECT message_id FROM jobs WHERE kind='application' AND ref_id=?",eventId);
-    if(event&&application?.message_id)this.store.queue('applicationUpdate',eventId,this.now(),`:${event.status}:${event.public_message_id||'unposted'}:v2`);
+    if(event&&application?.message_id)this.store.queue('applicationUpdate',eventId,this.now(),`:${event.status}:${event.public_message_id||'unposted'}:v3`);
   }
   bumpEvents(guildId,actor) {
     this.guard();this.requireManager(guildId,actor);

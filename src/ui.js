@@ -1,33 +1,34 @@
 import { ActionRowBuilder, ButtonBuilder, ButtonStyle, ModalBuilder, LabelBuilder, TextInputBuilder, TextInputStyle, TextDisplayBuilder, FileUploadBuilder, StringSelectMenuBuilder, RoleSelectMenuBuilder, ChannelSelectMenuBuilder, ChannelType } from 'discord.js';
 import { statuses, time } from './discord-transport.js';
-import { DEFAULT_TIME_LIMITS,timeLimitsText } from './time-limits.js';
+import { DEFAULT_TIME_LIMITS,timeLimitsText,timeRangeText } from './time-limits.js';
 
 export const btn = (id,label,style=ButtonStyle.Primary) => new ButtonBuilder().setCustomId(id).setLabel(label).setStyle(style);
 export const row = (...components) => new ActionRowBuilder().addComponents(components);
 export const back = () => row(btn('ui:home','닫기',ButtonStyle.Secondary));
 export const payload = (content,components=[],embeds=[]) => ({content,components,embeds,allowedMentions:{parse:[]}});
-const input = (id,label,max=100,paragraph=false,required=true,value) => {
+const input = (id,label,max=100,paragraph=false,required=true,value,description) => {
   const field = new TextInputBuilder().setCustomId(id).setStyle(paragraph ? TextInputStyle.Paragraph : TextInputStyle.Short).setMaxLength(max).setRequired(required);
   if (value) field.setValue(value);
-  return new LabelBuilder().setLabel(label).setTextInputComponent(field);
+  const item=new LabelBuilder().setLabel(label).setTextInputComponent(field);
+  return description?item.setDescription(description):item;
 };
 export function createModal(event=null,limits=DEFAULT_TIME_LIMITS) {
   return new ModalBuilder().setCustomId(event?`form:details:${event.id}`:'form:create').setTitle('1/5 · 이벤트 기본 정보').addLabelComponents(
     input('title','이벤트명',100,false,true,event?.title), input('description','상세 설명',1800,true,true,event?.description),
-    input('duration',`진행 시간 (${limits.duration_min}~${limits.duration_max}분)`,5,false,true,String(event?event.duration_ms/60000:Math.min(limits.duration_max,Math.max(limits.duration_min,60)))),
-    input('claim',`수령 시간 (${limits.claim_min}~${limits.claim_max}분)`,5,false,true,String(event?event.claim_ms/60000:Math.min(limits.claim_max,Math.max(limits.claim_min,30)))),
+    input('duration','진행 시간 (분 단위 입력)',5,false,true,String(event?event.duration_ms/60000:Math.min(limits.duration_max,Math.max(limits.duration_min,60))),`허용 범위: ${timeRangeText(limits.duration_min,limits.duration_max)}`),
+    input('claim','수령 시간 (분 단위 입력)',5,false,true,String(event?event.claim_ms/60000:Math.min(limits.claim_max,Math.max(limits.claim_min,30))),`허용 범위: ${timeRangeText(limits.claim_min,limits.claim_max)}`),
     input('winners','당첨 인원 / 등록할 상품 수',3,false,true,String(event?.winner_count||1)),
   );
 }
 export function templateCreateModal(template,event=null,limits=DEFAULT_TIME_LIMITS) {
   return new ModalBuilder().setCustomId(event?`form:templatedetails:${event.id}`:`form:templatecreate:${template.id}`).setTitle('이벤트 기본 정보')
     .addTextDisplayComponents(new TextDisplayBuilder().setContent(`**${template.name}**\n${template.description}\n\n등록된 참여·차단 역할과 인증 설정이 함께 적용됩니다.`))
-    .addLabelComponents(input('title','이벤트명',100,false,true,event?.title),input('duration',`진행 시간 (${limits.duration_min}~${limits.duration_max}분)`,5,false,true,String(event?event.duration_ms/60000:Math.min(limits.duration_max,Math.max(limits.duration_min,60)))),input('claim',`수령 시간 (${limits.claim_min}~${limits.claim_max}분)`,5,false,true,String(event?event.claim_ms/60000:Math.min(limits.claim_max,Math.max(limits.claim_min,30)))),input('winners','당첨 인원',3,false,true,String(event?.winner_count||1)));
+    .addLabelComponents(input('title','이벤트명',100,false,true,event?.title),input('duration','진행 시간 (분 단위 입력)',5,false,true,String(event?event.duration_ms/60000:Math.min(limits.duration_max,Math.max(limits.duration_min,60))),`허용 범위: ${timeRangeText(limits.duration_min,limits.duration_max)}`),input('claim','수령 시간 (분 단위 입력)',5,false,true,String(event?event.claim_ms/60000:Math.min(limits.claim_max,Math.max(limits.claim_min,30))),`허용 범위: ${timeRangeText(limits.claim_min,limits.claim_max)}`),input('winners','당첨 인원',3,false,true,String(event?.winner_count||1)));
 }
 export function timeLimitsModal(limits) {
   return new ModalBuilder().setCustomId('form:timelimits').setTitle('진행·수령 시간 범위 설정')
     .addTextDisplayComponents(new TextDisplayBuilder().setContent(`현재: ${timeLimitsText(limits)}\n분 단위 정수로 입력해주세요. 이미 진행 중인 이벤트의 시간은 유지됩니다.`))
-    .addLabelComponents(input('duration_min','최소 진행 시간 (1~43200분)',5,false,true,String(limits.duration_min)),input('duration_max','최대 진행 시간 (1~43200분)',5,false,true,String(limits.duration_max)),input('claim_min','최소 수령 시간 (1~10080분)',5,false,true,String(limits.claim_min)),input('claim_max','최대 수령 시간 (1~10080분)',5,false,true,String(limits.claim_max)));
+    .addLabelComponents(input('duration_min','최소 진행 시간 (분 단위 입력)',5,false,true,String(limits.duration_min),'허용 범위: 1분~30일'),input('duration_max','최대 진행 시간 (분 단위 입력)',5,false,true,String(limits.duration_max),'허용 범위: 1분~30일'),input('claim_min','최소 수령 시간 (분 단위 입력)',5,false,true,String(limits.claim_min),'허용 범위: 1분~7일'),input('claim_max','최대 수령 시간 (분 단위 입력)',5,false,true,String(limits.claim_max),'허용 범위: 1분~7일'));
 }
 export function productModal(event,product) {
   return new ModalBuilder().setCustomId(`form:product:${event.id}:${product.slot}`).setTitle(`${product.slot}번 상품 정보`)
