@@ -134,7 +134,7 @@ export class DiscordTransport {
               { name: '상품 전달 방식', value: deliverySummary(this.store,event.id).label },
               { name: '인증 안내', value: event.proof_instructions || '없음' },
               { name: '역할 조건', value: `허용: ${JSON.parse(event.allow_roles).map(id => `<@&${id}>`).join(', ') || '제한 없음'}\n거절: ${JSON.parse(event.deny_roles).map(id => `<@&${id}>`).join(', ') || '없음'}` });
-          components = [row(button(`ui:event:${event.id}`,'이벤트·상품 확인'),button(`eapprove:${event.id}`, '승인·시작', ButtonStyle.Success), button(`ereject:${event.id}`, '거절', ButtonStyle.Danger))];
+          components = [row(button(`ui:manageevent:${event.id}`,'이벤트·상품 확인'),button(`eapprove:${event.id}`, '승인·시작', ButtonStyle.Success), button(`ereject:${event.id}`, '거절', ButtonStyle.Danger))];
           break;
         case 'start':
           content = JSON.parse(this.store.guild(event.guild_id).mention_roles).map(id => `<@&${id}>`).join(' ');

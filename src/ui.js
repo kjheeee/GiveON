@@ -82,8 +82,9 @@ export function listView(title,rows,page,prefix,optionPrefix,format) {
   nav.push(btn('ui:home','닫기',ButtonStyle.Secondary)); components.push(row(...nav));
   return payload(`**${title} · ${page+1}페이지**\n${shown.length ? '아래 목록에서 선택하세요.' : '표시할 항목이 없어요.'}`,components);
 }
-export function eventView(engine,transport,guildId,actor,eventId,page=0) {
-  const event=engine.visibleEvent(guildId,actor,eventId), own=event.owner_id===actor.userId, manager=engine.manager(guildId,actor);
+export function eventView(engine,transport,guildId,actor,eventId,page=0,manage=false) {
+  if(manage)engine.requireManager(guildId,actor);
+  const event=engine.visibleEvent(guildId,actor,eventId), own=event.owner_id===actor.userId,isManager=engine.manager(guildId,actor), manager=manage&&isManager,eventPrefix=manage?'manageevent':'event';
   const components=[];
   const count=engine.store.get('SELECT count(*) n FROM prizes WHERE event_id=? AND secret IS NOT NULL',eventId).n;
   if (own && event.status==='DRAFT') components.push(row(
@@ -93,22 +94,23 @@ export function eventView(engine,transport,guildId,actor,eventId,page=0) {
   if (event.status==='DRAFT' && (own||manager)) components.push(row(btn(`ui:conditions:${eventId}`,'참여 역할 조건')));
   if (manager && event.status==='PENDING') components.push(row(btn(`eapprove:${eventId}`,'승인·시작',ButtonStyle.Success),btn(`ereject:${eventId}`,'신청 거절',ButtonStyle.Danger)));
   const management=[];
+  if(!manage&&event.status==='PENDING')management.push(btn(`ui:event:${eventId}`,'상태 새로고침',ButtonStyle.Secondary));
   if (manager) management.push(btn(`ui:eventclaims:${eventId}:0`,'당첨 관리'));
   if ((own||manager) && !['COMPLETED','CANCELLED'].includes(event.status)) management.push(btn(`ui:cancel:${eventId}`,'이벤트 취소',ButtonStyle.Danger));
   if (management.length) components.push(row(...management));
-  const embed=transport.eventEmbed(event,{revealPrivate:own||manager});
+  const embed=transport.eventEmbed(event,{revealPrivate:own||isManager});
   if(event.public_message_id) {
     const people=engine.participants(guildId,actor,eventId,page);
     embed.addFields({name:`참여자 목록 · 총 ${people.total}명 · ${people.page+1}/${people.pages}페이지`,
       value:people.users.length?people.users.map((id,index)=>`${people.page*25+index+1}. <@${id}>`).join('\n'):'아직 참여자가 없어요.'});
     const nav=[];
-    if(people.page>0)nav.push(btn(`ui:event:${eventId}:${people.page-1}`,'이전',ButtonStyle.Secondary));
-    if(people.page+1<people.pages)nav.push(btn(`ui:event:${eventId}:${people.page+1}`,'다음',ButtonStyle.Secondary));
-    nav.push(btn(`ui:event:${eventId}:${people.page}`,'새로고침',ButtonStyle.Secondary));components.push(row(...nav));
+    if(people.page>0)nav.push(btn(`ui:${eventPrefix}:${eventId}:${people.page-1}`,'이전',ButtonStyle.Secondary));
+    if(people.page+1<people.pages)nav.push(btn(`ui:${eventPrefix}:${eventId}:${people.page+1}`,'다음',ButtonStyle.Secondary));
+    nav.push(btn(`ui:${eventPrefix}:${eventId}:${people.page}`,'새로고침',ButtonStyle.Secondary));components.push(row(...nav));
   }
-  components.push(row(btn(`ui:products:${eventId}:0`,'상품 목록',ButtonStyle.Secondary)));
+  components.push(row(btn(`ui:${manage?'manageproducts':'products'}:${eventId}:0`,'상품 목록',ButtonStyle.Secondary)));
   components.push(back());
-  return payload(`이벤트 번호: ${eventId}${own||manager ? `\n보관 중인 상품: ${count}건` : ''}${event.rejection_reason ? `\n거절 사유: ${event.rejection_reason}` : ''}`,components,[embed]);
+  return payload(`${!manage&&event.status==='PENDING'?'**관리자 승인 대기 중**\n관리자의 승인을 기다리고 있어요.\n':''}이벤트 번호: ${eventId}${own||manager ? `\n보관 중인 상품: ${count}건` : ''}${event.rejection_reason ? `\n거절 사유: ${event.rejection_reason}` : ''}`,components,[embed]);
 }
 export function claimView(engine,guildId,actor,claimId,managerView=false) {
   const {claim,event}=engine.claim(claimId,guildId);
@@ -134,10 +136,11 @@ export function claimView(engine,guildId,actor,claimId,managerView=false) {
   return payload(description,components);
 }
 
-export function productsView(engine,guildId,actor,eventId,page=0){
-  const data=engine.products(guildId,actor,eventId,page),nav=[];
-  if(data.page>0)nav.push(btn(`ui:products:${eventId}:${data.page-1}`,'이전',ButtonStyle.Secondary));
-  if(data.page+1<data.pages)nav.push(btn(`ui:products:${eventId}:${data.page+1}`,'다음',ButtonStyle.Secondary));
-  nav.push(btn(`ui:event:${eventId}`,'이벤트로',ButtonStyle.Secondary));
+export function productsView(engine,guildId,actor,eventId,page=0,manage=false){
+  if(manage)engine.requireManager(guildId,actor);
+  const data=engine.products(guildId,actor,eventId,page),nav=[],prefix=manage?'manageproducts':'products';
+  if(data.page>0)nav.push(btn(`ui:${prefix}:${eventId}:${data.page-1}`,'이전',ButtonStyle.Secondary));
+  if(data.page+1<data.pages)nav.push(btn(`ui:${prefix}:${eventId}:${data.page+1}`,'다음',ButtonStyle.Secondary));
+  nav.push(btn(`ui:${manage?'manageevent':'event'}:${eventId}`,'이벤트로',ButtonStyle.Secondary));
   return payload(`**${data.event.title} · 상품 목록 (${data.page+1}/${data.pages})**\n`+data.products.map(p=>`${p.slot}번 상품: **${p.name}**\n${p.direct?'실물·직접 전달':'디지털 자동 전달'}${p.publicName?'':' · 상품명 비공개'}`).join('\n\n'),[row(...nav),back()]);
 }

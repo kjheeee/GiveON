@@ -31,9 +31,10 @@ export function handler(engine,transport) {
     requireThat(value.claim.user_id===actor.userId,'당첨자 본인만 사용할 수 있어요.');
     return value;
   };
-  const renderEvent=async(i,a,eid,page=0) => {
+  const renderEvent=async(i,a,eid,page=0,manage=false) => {
+    if(manage)engine.requireManager(i.guildId,a);
     const e=engine.visibleEvent(i.guildId,a,eid);
-    return respond(i,e.status==='DRAFT'&&e.owner_id===a.userId?await flow.view(i.guildId,a,eid):eventView(engine,transport,i.guildId,a,eid,page));
+    return respond(i,e.status==='DRAFT'&&e.owner_id===a.userId?await flow.view(i.guildId,a,eid):eventView(engine,transport,i.guildId,a,eid,page,manage));
   };
   const renderClaim=(i,a,cid,manage=false) => {
     if (manage) engine.requireManager(i.guildId,a); else own(i.guildId,a,cid);
@@ -43,7 +44,7 @@ export function handler(engine,transport) {
     if (mode!=='mine') engine.requireManager(i.guildId,a);
     const records=mode==='pending'?store.all("SELECT id,title,status FROM events WHERE guild_id=? AND status='PENDING' ORDER BY created_at DESC,id DESC LIMIT 21 OFFSET ?",i.guildId,page*20):mode==='events' ? store.all('SELECT id,title,status FROM events WHERE guild_id=? ORDER BY created_at DESC,id DESC LIMIT 21 OFFSET ?',i.guildId,page*20) :
       store.all('SELECT id,title,status FROM events WHERE guild_id=? AND owner_id=? ORDER BY created_at DESC,id DESC LIMIT 21 OFFSET ?',i.guildId,a.userId,page*20);
-    const view=listView(mode==='events'?'전체 이벤트':mode==='pending'?'승인 대기':'내 신청',records,page,`ui:${mode}`,'pick:event',e=>statuses[e.status]);
+    const view=listView(mode==='events'?'전체 이벤트':mode==='pending'?'승인 대기':'내 신청',records,page,`ui:${mode}`,mode==='mine'?'pick:event':'pick:event:manage',e=>statuses[e.status]);
     if(mode==='mine')view.components.unshift(row(btn('ui:reviews:0','내 이벤트 인증 대기')));
     return respond(i,view);
   }
@@ -207,7 +208,7 @@ export function handler(engine,transport) {
           return await respond(i,await flow.templateView(i.guildId,a,tid));
         }
         if(action==='templateproof'){engine.updateTemplate(i.guildId,a,arg,{proof_instructions:i.fields.getTextInputValue('instructions')});return await respond(i,await flow.templateView(i.guildId,a,arg));}
-        if (action==='reject') {engine.rejectEvent(i.guildId,a,arg,i.fields.getTextInputValue('reason'));return await renderEvent(i,a,arg);}
+        if (action==='reject') {engine.rejectEvent(i.guildId,a,arg,i.fields.getTextInputValue('reason'));return await renderEvent(i,a,arg,0,true);}
         throw new UserError('지원하지 않는 입력창이에요.');
       }
       if (select) {
@@ -216,7 +217,7 @@ export function handler(engine,transport) {
         if(kind==='tpl'&&action==='roles'){
           requireThat(['allow_roles','deny_roles'].includes(extra),'역할 조건을 확인해주세요.');engine.updateTemplate(i.guildId,a,arg,{[extra]:i.values});return await respond(i,await flow.templateView(i.guildId,a,arg));
         }
-        if (kind==='pick'&&action==='event') return await renderEvent(i,a,i.values[0]);
+        if (kind==='pick'&&action==='event') return await renderEvent(i,a,i.values[0],0,arg==='manage');
         if (kind==='pick'&&action==='claim') return await renderClaim(i,a,i.values[0],arg==='manager');
         if (kind==='ui'&&action==='channelset') return await configureChannel(i,a,arg,extra||'condition_roles');
         if(kind==='ui'&&action==='settingskind')return settingsView(i,a,i.values[0]);
@@ -224,7 +225,7 @@ export function handler(engine,transport) {
         if (kind==='ui'&&action==='condition') {engine.replaceConditions(i.guildId,a,arg,extra,i.values);return await conditionView(i,a,arg);}
         throw new UserError('지원하지 않는 선택 메뉴예요.');
       }
-      if (kind==='eapprove') {engine.approveEvent(i.guildId,a,action);return await renderEvent(i,a,action);}
+      if (kind==='eapprove') {engine.approveEvent(i.guildId,a,action);return await renderEvent(i,a,action,0,true);}
       if (kind==='claim') {
         const value=own(i.guildId,a,action);
         if (value.claim.status==='CLAIMABLE') await engine.startClaim(i.guildId,a,action);
@@ -266,7 +267,8 @@ export function handler(engine,transport) {
       if (['mine','events','pending'].includes(action)) return eventsList(i,a,action,pageNumber(arg));
       if (['wins','reviews','issues'].includes(action)) return claimsList(i,a,action,pageNumber(arg));
       if (action==='eventclaims') return claimsList(i,a,action,pageNumber(extra),arg);
-      if(action==='products')return respond(i,productsView(engine,i.guildId,a,arg,pageNumber(extra)));
+      if(action==='products'||action==='manageproducts')return respond(i,productsView(engine,i.guildId,a,arg,pageNumber(extra),action==='manageproducts'));
+      if(action==='manageevent')return await renderEvent(i,a,arg,pageNumber(extra),true);
       if (action==='event') return await renderEvent(i,a,arg,pageNumber(extra));
       if (action==='admin') return adminView(i,a);
       if (action==='channels') return settingsView(i,a);
