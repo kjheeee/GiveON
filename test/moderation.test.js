@@ -7,7 +7,7 @@ import { handler } from '../src/interactions.js';
 
 test('실물 상품은 개별 코드 없이 신청하고 주최자 연락 안내만 전달하며 인원 변경도 반영한다',async t=>{
   const f=fixture(t),user=actor(4),eid=f.engine.create(GUILD,HOST,{title:'실물 상품',description:'배송 안내',durationMinutes:1,claimMinutes:1,winners:2});
-  f.engine.setDeliveryMode(GUILD,HOST,eid,true);f.engine.updateDraftDetails(GUILD,HOST,eid,{title:'수정 상품',description:'설명',durationMinutes:1,claimMinutes:1,winners:1});
+  f.engine.setDeliveryMode(GUILD,HOST,eid,1,true);f.engine.setDeliveryMode(GUILD,HOST,eid,2,true);f.engine.updateDraftDetails(GUILD,HOST,eid,{title:'수정 상품',description:'설명',durationMinutes:1,claimMinutes:1,winners:1});
   assert.equal(f.store.all('SELECT slot FROM prizes WHERE event_id=?',eid).length,1);assert.throws(()=>f.engine.setPrize(GUILD,HOST,eid,1,content()),/직접 전달/);
   f.engine.submit(GUILD,HOST,eid);await f.engine.tick();f.engine.approveEvent(GUILD,MANAGER,eid);await f.engine.tick();f.add(user);f.engine.join(GUILD,user,eid);f.advance(60001);await f.engine.tick();
   let sent;f.transport.sendPrize=async(channel,event,claim,value)=>{sent=value;return {id:'direct-contact',channelId:channel};};

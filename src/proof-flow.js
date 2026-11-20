@@ -39,7 +39,8 @@ export class ProofFlow {
   respond(i,value) {return i.editReply({content:'',embeds:[],components:[],attachments:[],allowedMentions:{parse:[]},...value});}
   hostView(context,withProof=false,inGuild=false) {
     const {guildId,actor,cid}=context,{claim,event}=this.engine.proofReviewer(guildId,actor,cid);
-    let text=`**${event.title} · 인증 검수**\n당첨자: <@${claim.user_id}>\n자리: ${claim.slot}\n상태: **${statuses[claim.status]}**\n당첨 번호: ${cid}`;
+    const direct=this.engine.direct(event.id,claim.slot);
+    let text=`**${event.title} · 인증 검수**\n당첨자: <@${claim.user_id}>\n자리: ${claim.slot}\n전달 방식: ${direct?'실물·직접 전달':'디지털 자동 전달'}\n상태: **${claim.status==='DELIVERED'&&direct?'주최자 연락 안내 완료':statuses[claim.status]}**\n당첨 번호: ${cid}`;
     const actions=[],value=payload(text);
     if(claim.status==='REVIEW') {
       actions.push(btn(`pview:${cid}`,'인증 자료 보기',ButtonStyle.Primary),btn(`papprove:${cid}:${claim.proof_version}`,'승인·자동 지급',ButtonStyle.Success),
@@ -50,14 +51,14 @@ export class ProofFlow {
         value.embeds=[new EmbedBuilder().setColor(0x5865f2).setTitle('제출한 인증 자료').setDescription(content.text||'(이미지만 제출됨)')];value.files=files(content,'proof');
       }
     } else if(claim.status==='SUBMITTING')value.content+=`\n보완 제출 대기 · 기한 ${time(claim.submit_deadline)}`;
-    else if(claim.status==='DELIVERED')value.content+='\n상품 지급을 완료했습니다. 봇 DB의 상품·인증 원문을 삭제했습니다.';
+    else if(claim.status==='DELIVERED')value.content+=`\n${direct?'주최자 연락 안내를 전달했습니다.':'상품 지급을 완료했습니다.'} 봇 DB의 상품·인증 원문을 삭제했습니다.`;
     actions.push(btn(`pstatus:${cid}`,'상태 확인',ButtonStyle.Secondary));value.components=[row(...actions)];
     if(inGuild)value.components.push(back());
     return value;
   }
   winnerView(context,inGuild=false) {
     const {claim,event}=this.engine.claim(context.cid,context.guildId),actions=[];
-    let text=`**${event.title} · 인증 제출**\n당첨 번호: ${claim.id}\n상태: **${statuses[claim.status]}**`;
+    let text=`**${event.title} · 인증 제출**\n당첨 번호: ${claim.id}\n상태: **${claim.status==='DELIVERED'&&this.engine.direct(event.id,claim.slot)?'주최자 연락 안내 완료':statuses[claim.status]}**`;
     if(claim.status==='SUBMITTING') {
       text+=`\n제출 기한: ${time(claim.submit_deadline)}`;
       if(claim.feedback)text+=`\n보완 요청: ${this.engine.vault.open(claim.feedback,`feedback:${claim.id}`).text}`;

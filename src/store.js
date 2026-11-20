@@ -32,7 +32,7 @@ export class Store extends StoreBase {
       );
       CREATE TABLE IF NOT EXISTS prizes (
         event_id TEXT NOT NULL REFERENCES events(id), slot INTEGER NOT NULL,
-        secret BLOB, status TEXT NOT NULL DEFAULT 'AVAILABLE', PRIMARY KEY(event_id,slot)
+        secret BLOB, status TEXT NOT NULL DEFAULT 'AVAILABLE', delivery_mode TEXT NOT NULL DEFAULT 'DIGITAL', PRIMARY KEY(event_id,slot)
       );
       CREATE TABLE IF NOT EXISTS entries (
         event_id TEXT NOT NULL REFERENCES events(id), user_id TEXT NOT NULL,
@@ -93,6 +93,13 @@ export class Store extends StoreBase {
       PRAGMA user_version=1;
     `);
     this.upgradeHostBlocks();
+    this.upgradePrizeDelivery();
+  }
+  upgradePrizeDelivery() {
+    this.tx(()=>{
+      if(!this.columns('prizes').includes('delivery_mode'))this.db.exec("ALTER TABLE prizes ADD COLUMN delivery_mode TEXT NOT NULL DEFAULT 'DIGITAL'");
+      this.db.exec("UPDATE prizes SET delivery_mode='DIRECT' WHERE event_id IN (SELECT event_id FROM direct_events); DELETE FROM direct_events;");
+    });
   }
   upgradeHostBlocks() {
     const columns=new Set(this.columns('host_blocks'));

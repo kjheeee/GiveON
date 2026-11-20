@@ -22,6 +22,14 @@ async function initialize() {
   const [[metadata]]=await connection.query('SELECT version FROM giveon_metadata WHERE id=1');
   if(metadata&&metadata.version>1)throw Object.assign(new Error('SCHEMA'),{code:'MYSQL_SCHEMA_NEWER'});
   for(const sql of mysqlSchema.slice(1))await connection.query(sql);
+  const [prizeColumns]=await connection.execute("SELECT COLUMN_NAME name FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='prizes'");
+  if(!prizeColumns.some(column=>column.name==='delivery_mode'))await connection.query("ALTER TABLE prizes ADD COLUMN delivery_mode VARCHAR(16) NOT NULL DEFAULT 'DIGITAL'");
+  await connection.beginTransaction();
+  try {
+    await connection.query("UPDATE prizes SET delivery_mode='DIRECT' WHERE event_id IN (SELECT event_id FROM direct_events)");
+    await connection.query('DELETE FROM direct_events');
+    await connection.commit();
+  }catch(error){await connection.rollback();throw error;}
   const [blockColumns]=await connection.execute("SELECT COLUMN_NAME name FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='host_blocks'");
   const existing=new Set(blockColumns.map(column=>column.name));
   for(const [name,definition] of Object.entries({reason:"VARCHAR(500) NOT NULL DEFAULT ''",active:'TINYINT NOT NULL DEFAULT 1',released_by:'VARCHAR(22) CHARACTER SET ascii COLLATE ascii_bin',released_at:'BIGINT'})) {

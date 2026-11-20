@@ -47,21 +47,21 @@ export class DraftFlow {
     this.save(eid,step,slot);
     if(step==='verification')return payload(`**3/5 · 인증이 필요한가요?**\n${e.proof_required?e.proof_instructions:'수령 전 확인할 자료가 있으면 인증 필요를 선택하세요.'}`, [row(btn(`flow:noproof:${eid}`,'인증 없이 진행',ButtonStyle.Success),btn(`ui:proofsettings:${eid}`,'인증 필요')),row(btn(`flow:step:${eid}:conditions`,'이전',ButtonStyle.Secondary))]);
     if(step==='items'){
-      const delivery=row(btn(`flow:mode:${eid}:digital`,'디지털 자동 전달',this.engine.direct(eid)?ButtonStyle.Secondary:ButtonStyle.Success),btn(`flow:mode:${eid}:direct`,'실물·직접 전달',this.engine.direct(eid)?ButtonStyle.Success:ButtonStyle.Secondary));
-      if(this.engine.direct(eid))return payload(`**4/5 · 실물·직접 전달**\n당첨자에게 주최자 <@${a.userId}> 연락 안내를 DM으로 보냅니다. 이름·주소·연락처를 봇에서 받지 않습니다.\n주최자가 당첨자와 개인 DM으로 배송·전달을 진행해주세요. 연락 안내 완료와 실물 수령 완료는 구분됩니다.`,[delivery,row(btn(`flow:step:${eid}:review`,'다음 · 최종 확인',ButtonStyle.Success)),back()]);
-      const count=this.store.get('SELECT count(*) n FROM prizes WHERE event_id=? AND secret IS NOT NULL',eid).n;
+      const direct=this.engine.direct(eid,slot),count=this.store.get('SELECT count(*) n FROM prizes WHERE event_id=? AND secret IS NOT NULL',eid).n;
       const registered=Boolean(this.store.get('SELECT secret IS NOT NULL filled FROM prizes WHERE event_id=? AND slot=?',eid,slot)?.filled);
+      const delivery=row(btn(`flow:mode:${eid}:${slot}:digital`,'이 자리 · 디지털',direct?ButtonStyle.Secondary:ButtonStyle.Success),btn(`flow:mode:${eid}:${slot}:direct`,'이 자리 · 실물·직접 전달',direct?ButtonStyle.Success:ButtonStyle.Secondary));
       const nav=[];if(slot>1)nav.push(btn(`flow:step:${eid}:items:${slot-1}`,'이전 상품',ButtonStyle.Secondary));
       if(registered&&slot<e.winner_count)nav.push(btn(`flow:step:${eid}:items:${slot+1}`,'다음 상품'));
       if(count===e.winner_count)nav.push(btn(`flow:step:${eid}:review`,'최종 확인',ButtonStyle.Success));
-      return payload(`**4/5 · 상품 내용 등록 (${count}/${e.winner_count})**\n지금 입력할 상품: **${slot}번**\n${registered?'이미 등록된 자리입니다. 다시 입력하면 이 자리의 내용만 교체합니다.':'당첨자에게 보낼 메시지나 이미지를 입력하세요.'}\n내용은 관리자에게 표시되지 않습니다.`,[delivery,row(btn(`flow:prize:${eid}:${slot}`,`${slot}번 상품 ${registered?'수정':'입력'}`,ButtonStyle.Success)),...(nav.length?[row(...nav)]:[]),row(btn(saved?.template_id?`flow:choose:${eid}:0`:`flow:step:${eid}:verification`,'이전 단계',ButtonStyle.Secondary),btn('ui:home','나중에 이어하기',ButtonStyle.Secondary))]);
+      const text=`**4/5 · 상품 내용 등록 (${count}/${e.winner_count})**\n현재 **${slot}번** · **${direct?'실물·직접 전달':'디지털 자동 전달'}**\n자리마다 다른 전달 방식을 선택할 수 있어요.\n${direct?'주최자 연락 안내를 준비했습니다. 이름·주소·연락처는 주최자와 개인 DM으로 주고받아주세요.':registered?'이미 등록된 자리입니다. 다시 입력하면 이 자리의 내용만 교체합니다.':'이 자리를 실물로 선택하거나, 디지털 상품 메시지·이미지를 입력하세요.'}\n상품 원문은 관리자에게 표시되지 않습니다.`;
+      return payload(text,[delivery,...(!direct?[row(btn(`flow:prize:${eid}:${slot}`,`${slot}번 디지털 상품 ${registered?'수정':'입력'}`,ButtonStyle.Success))]:[]),...(nav.length?[row(...nav)]:[]),row(btn(saved?.template_id?`flow:choose:${eid}:0`:`flow:step:${eid}:verification`,'이전 단계',ButtonStyle.Secondary),btn('ui:home','나중에 이어하기',ButtonStyle.Secondary))]);
     }
     const template=saved?.template_id?this.engine.template(saved.template_id,gid):null;
     const embed=new EmbedBuilder().setTitle(e.title).setDescription(e.description).setColor(0x18e979).addFields(
       {name:'진행 시간',value:`${e.duration_ms/60000}분`,inline:true},{name:'수령 시간',value:`${e.claim_ms/60000}분`,inline:true},{name:'당첨 인원',value:`${e.winner_count}명`,inline:true},
       {name:'참여 가능 역할',value:mention(e.allow_roles)},{name:'참여 차단 역할',value:mention(e.deny_roles)},
       {name:'인증',value:e.proof_required?e.proof_instructions:'없음'},
-      {name:'전달 방식',value:this.engine.direct(eid)?'실물·직접 전달 (주최자 연락 안내)':'디지털 상품 자동 전달'},
+      {name:'전달 방식',value:this.engine.deliverySummary(eid).label},{name:'실물·직접 전달 자리',value:this.engine.deliverySummary(eid).directSlots.join(', ')||'없음'},{name:'디지털 자리',value:this.engine.deliverySummary(eid).digitalSlots.join(', ')||'없음'},
     );
     if(template)embed.addFields({name:'적용 템플릿',value:template.name});
     return payload('**5/5 · 최종 확인**\n내용을 확인하고 승인 요청을 누르세요. 상품 전달 원문은 이 화면에 표시하지 않습니다.',[

@@ -105,7 +105,7 @@ export function eventView(engine,transport,guildId,actor,eventId,page=0) {
 }
 export function claimView(engine,guildId,actor,claimId,managerView=false) {
   const {claim,event}=engine.claim(claimId,guildId);
-  let description=`**${event.title}**\n당첨 번호: ${claim.id}\n자리: ${claim.slot}\n상태: **${claim.status==='DELIVERED'&&engine.direct(event.id)?'주최자 연락 안내 완료':statuses[claim.status]}**`;
+  let description=`**${event.title}**\n당첨 번호: ${claim.id}\n자리: ${claim.slot}\n상태: **${claim.status==='DELIVERED'&&engine.direct(event.id,claim.slot)?'주최자 연락 안내 완료':statuses[claim.status]}**`;
   const actions=[];
   if (!managerView) {
     if (claim.status==='CLAIMABLE') { description+=`\n수령 기한: ${time(claim.claim_deadline)}`; actions.push(btn(`claim:${claimId}`,'수령',ButtonStyle.Success)); }

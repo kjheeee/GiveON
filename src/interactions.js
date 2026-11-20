@@ -138,6 +138,7 @@ export function handler(engine,transport) {
         if(kind==='flow'&&action==='template'&&arg==='new')form=templateCreateModal(engine.templateForUse(i.values[0],i.guildId));
         if(kind==='flow'&&action==='prize'){
           const e=draft(i.guildId,a,arg),slot=Number(extra);requireThat(Number.isInteger(slot)&&slot>=1&&slot<=e.winner_count,'상품 자리 번호가 잘못되었어요.');
+          requireThat(!engine.direct(e.id,slot),'실물 자리는 연락 안내가 자동 준비되어 디지털 상품 입력이 필요하지 않아요.');
           form=contentModal(`form:prize:${arg}:${slot}`,`${slot}번 상품 내용`);
         }
         if(kind==='tpl'&&['new','meta','proof'].includes(action)){
@@ -145,7 +146,8 @@ export function handler(engine,transport) {
           form=action==='new'?templateMetaModal():action==='meta'?templateMetaModal(engine.template(arg,i.guildId)):templateProofModal(engine.template(arg,i.guildId));
         }
         if (kind==='ui'&&action==='prizeform') {
-          const e=draft(i.guildId,a,arg),slot=store.get('SELECT slot FROM prizes WHERE event_id=? AND secret IS NULL ORDER BY slot LIMIT 1',e.id)?.slot||1;
+          const e=draft(i.guildId,a,arg),slot=store.get("SELECT slot FROM prizes WHERE event_id=? AND delivery_mode='DIGITAL' ORDER BY secret IS NOT NULL,slot LIMIT 1",e.id)?.slot;
+          requireThat(slot,'모든 자리가 실물·직접 전달이에요. 상품 단계에서 자리별 방식을 확인해주세요.');
           form=contentModal(`form:prize:${arg}`,'자리별 상품 전달 내용',slot);
         }
         if (kind==='ui'&&action==='proofsettings') form=proofSettingsModal(draft(i.guildId,a,arg));
@@ -229,12 +231,18 @@ export function handler(engine,transport) {
       if (kind==='join') {const joined=engine.join(i.guildId,a,action);return respond(i,payload(joined?'참여했어요!':'이미 참여했어요.',[back()]));}
       if (kind==='leave') {engine.leave(i.guildId,a,action);return respond(i,payload('참여를 취소했어요.',[back()]));}
       if(kind==='flow'){
-        if(action==='mode'){
-          const e=draft(i.guildId,a,arg);requireThat(['digital','direct'].includes(extra),'전달 방식을 선택해주세요.');
-          if(engine.direct(e.id)===(extra==='direct'))return respond(i,await flow.view(i.guildId,a,e.id,'items'));
-          return respond(i,payload('전달 방식을 변경하면 이미 등록한 상품 내용을 삭제합니다. 변경할까요?',[row(btn(`flow:modeok:${arg}:${extra}`,'방식 변경 확인',ButtonStyle.Danger),btn(`flow:step:${arg}:items`,'돌아가기',ButtonStyle.Secondary))]));
+        if(action==='mode'||action==='modeok'){
+          const e=draft(i.guildId,a,arg),slot=Number(extra),mode=parts[4];
+          requireThat(Number.isInteger(slot)&&slot>=1&&slot<=e.winner_count&&['digital','direct'].includes(mode),'상품 자리와 전달 방식을 다시 선택해주세요.');
+          const direct=mode==='direct';
+          if(engine.direct(e.id,slot)===direct)return respond(i,await flow.view(i.guildId,a,e.id,'items',slot));
+          if(action==='mode'&&direct&&store.get('SELECT secret IS NOT NULL filled FROM prizes WHERE event_id=? AND slot=?',e.id,slot)?.filled) {
+            return respond(i,payload(`${slot}번을 실물·직접 전달로 바꾸면 이 자리의 디지털 상품 내용을 삭제합니다. 변경할까요?`,[row(btn(`flow:modeok:${arg}:${slot}:${mode}`,'이 자리 변경 확인',ButtonStyle.Danger),btn(`flow:step:${arg}:items:${slot}`,'돌아가기',ButtonStyle.Secondary))]));
+          }
+          engine.setDeliveryMode(i.guildId,a,arg,slot,direct);
+          const next=direct?store.get('SELECT slot FROM prizes WHERE event_id=? AND secret IS NULL ORDER BY slot LIMIT 1',arg)?.slot:slot;
+          return respond(i,await flow.view(i.guildId,a,arg,next?'items':'review',next||slot));
         }
-        if(action==='modeok'){requireThat(['digital','direct'].includes(extra),'전달 방식을 선택해주세요.');engine.setDeliveryMode(i.guildId,a,arg,extra==='direct');return respond(i,await flow.view(i.guildId,a,arg,'items'));}
         if(action==='choose')return respond(i,flow.choose(i.guildId,a,arg,pageNumber(extra)));
         if(action==='custom'){engine.applyTemplate(i.guildId,a,arg,null);return await renderEvent(i,a,arg);}
         if(action==='step')return await respond(i,await flow.view(i.guildId,a,arg,extra,parts[4]?Number(parts[4]):null));

@@ -11,6 +11,15 @@ test('기존 주최 제한 테이블에 사유·해제 필드를 추가하고 �
   store.upgradeHostBlocks();store.upgradeHostBlocks();
   const block=store.get('SELECT * FROM host_blocks');assert.equal(block.user_id,'u');assert.equal(block.active,1);assert.equal(block.reason,'');assert.equal(block.released_by,null);
 });
+test('기존 전체 실물 이벤트를 자리별 방식으로 이관하고 이후 혼합 설정은 재기동에도 유지한다',t=>{
+  const store=new Store();t.after(()=>store.close());
+  store.guild('g');store.run("INSERT INTO events(id,guild_id,owner_id,title,description,duration_ms,claim_ms,winner_count,proof_required,proof_instructions,created_at) VALUES ('e','g','u','title','description',60000,60000,2,0,'',1)");
+  for(let slot=1;slot<=2;slot++)store.run("INSERT INTO prizes(event_id,slot,secret) VALUES ('e',?,?)",slot,Buffer.from(`encrypted-${slot}`));
+  store.db.exec("ALTER TABLE prizes DROP COLUMN delivery_mode; INSERT INTO direct_events(event_id) VALUES ('e')");
+  store.upgradePrizeDelivery();assert.deepEqual(store.all('SELECT delivery_mode FROM prizes ORDER BY slot').map(p=>p.delivery_mode),['DIRECT','DIRECT']);assert.equal(store.all('SELECT * FROM direct_events').length,0);
+  assert.equal(Buffer.from(store.get("SELECT secret FROM prizes WHERE event_id='e' AND slot=2").secret).toString(),'encrypted-2');
+  store.run("UPDATE prizes SET delivery_mode='DIGITAL' WHERE event_id='e' AND slot=2");store.upgradePrizeDelivery();assert.equal(store.get("SELECT delivery_mode FROM prizes WHERE event_id='e' AND slot=2").delivery_mode,'DIGITAL');
+});
 test('DB 선택 기본값은 SQLite이며 MySQL 정보 없이도 기존 저장소를 사용한다',()=>{
   const settings=config(env);assert.equal(settings.databaseDriver,'sqlite');assert.equal(settings.mysql,undefined);
   const store=createStore({...settings,databasePath:':memory:'});try{assert.ok(store instanceof Store);assert.equal(store.guild('100000000000003').id,'100000000000003');}finally{store.close();}

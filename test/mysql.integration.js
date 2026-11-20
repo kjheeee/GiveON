@@ -39,3 +39,12 @@ test('MySQL 구 주최 제한의 사유·해제 필드를 추가하고 기존 �
   f.store.close();const upgraded=new MySQLStore(mysqlTestOptions());t.after(()=>upgraded.close());
   const row=upgraded.get('SELECT * FROM host_blocks WHERE user_id=?',actor(90).userId);assert.equal(row.active,1);assert.equal(row.reason,'');assert.equal(row.actor_id,OWNER.userId);
 });
+test('MySQL 기존 전체 실물을 자리별로 이관하며 이후 혼합 방식과 암호문을 재개방해도 보존한다',async t=>{
+  const f=fixture(t),eid=await f.event({winners:2,start:false});
+  const original=Buffer.from(f.store.get('SELECT secret FROM prizes WHERE event_id=? AND slot=2',eid).secret);
+  f.store.run('ALTER TABLE prizes DROP COLUMN delivery_mode');f.store.run('INSERT INTO direct_events(event_id) VALUES (?)',eid);f.store.close();
+  const store=new MySQLStore(mysqlTestOptions());t.after(()=>store.close());
+  assert.deepEqual(store.all('SELECT delivery_mode FROM prizes WHERE event_id=? ORDER BY slot',eid).map(p=>p.delivery_mode),['DIRECT','DIRECT']);assert.deepEqual(store.get('SELECT secret FROM prizes WHERE event_id=? AND slot=2',eid).secret,original);
+  store.run("UPDATE prizes SET delivery_mode='DIGITAL' WHERE event_id=? AND slot=2",eid);store.close();
+  const reopened=new MySQLStore(mysqlTestOptions());t.after(()=>reopened.close());assert.equal(reopened.get('SELECT delivery_mode FROM prizes WHERE event_id=? AND slot=2',eid).delivery_mode,'DIGITAL');
+});

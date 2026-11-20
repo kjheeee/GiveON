@@ -1,5 +1,6 @@
 import { randomBytes } from 'node:crypto';
 import { draw } from './draw.js';
+import { isDirect,deliverySummary } from './delivery.js';
 
 export const PROOF_MS = 5 * 60_000;
 export const HOST_NOTICE_KINDS = new Set(['hostCreated','hostStarted','hostReceived']);
@@ -171,13 +172,12 @@ export class Engine {
     const description=this.store.get('SELECT template_id FROM draft_steps WHERE event_id=?',eventId)?.template_id?event.description:options.description;
     if(!title?.trim()||title.length>100||!description?.trim()||description.length>1800) fail('상품명은 100자, 설명은 1,800자 이내로 입력해주세요.');
     if(!Number.isInteger(durationMinutes)||durationMinutes<1||durationMinutes>43200||!Number.isInteger(claimMinutes)||claimMinutes<1||claimMinutes>10080||!Number.isInteger(winners)||winners<1||winners>100) fail('시간과 당첨 인원을 올바르게 입력해주세요.');
-    if(!this.direct(eventId)&&this.store.get('SELECT slot FROM prizes WHERE event_id=? AND slot>? AND secret IS NOT NULL LIMIT 1',eventId,winners)) fail('줄어드는 자리에 등록된 상품이 있어 당첨 인원을 줄일 수 없어요. 등록한 상품 내용은 유지됩니다.');
+    if(this.store.get("SELECT slot FROM prizes WHERE event_id=? AND slot>? AND secret IS NOT NULL AND delivery_mode!='DIRECT' LIMIT 1",eventId,winners)) fail('줄어드는 자리에 등록된 상품이 있어 당첨 인원을 줄일 수 없어요. 등록한 상품 내용은 유지됩니다.');
     this.store.tx(()=>{
       this.store.run('UPDATE events SET title=?,description=?,duration_ms=?,claim_ms=?,winner_count=? WHERE id=?',title.trim(),description.trim(),durationMinutes*60000,claimMinutes*60000,winners,eventId);
       for(let slot=1;slot<=winners;slot++) this.store.run('INSERT OR IGNORE INTO prizes(event_id,slot) VALUES (?,?)',eventId,slot);
-      if(this.direct(eventId))this.store.run('UPDATE prizes SET secret=NULL WHERE event_id=? AND slot>?',eventId,winners);
+      this.store.run("UPDATE prizes SET secret=NULL WHERE event_id=? AND slot>? AND delivery_mode='DIRECT'",eventId,winners);
       this.store.run('DELETE FROM prizes WHERE event_id=? AND slot>? AND secret IS NULL',eventId,winners);
-      if(this.direct(eventId))for(let slot=1;slot<=winners;slot++)this.store.run('UPDATE prizes SET secret=? WHERE event_id=? AND slot=?',this.vault.seal(this.contactContent(event),`prize:${eventId}:${slot}`),eventId,slot);
     });
   }
   setPrize(guildId, actor, eventId, slot, content) {
@@ -185,8 +185,8 @@ export class Engine {
     const event = this.event(eventId, guildId);
     if (event.owner_id !== actor.userId) fail('상품 내용은 주최자만 등록할 수 있어요.');
     if (event.status !== 'DRAFT') fail('신청 전 초안에서만 상품을 등록할 수 있어요.');
-    if(this.direct(eventId))fail('직접 전달 방식은 개별 상품 대신 주최자 연락 안내를 전달해요.');
     if (!Number.isInteger(slot) || slot < 1 || slot > event.winner_count) fail('당첨 인원 안의 자리 번호를 입력해주세요.');
+    if(this.direct(eventId,slot))fail('직접 전달 방식은 개별 상품 대신 주최자 연락 안내를 전달해요.');
     this.validateContent(content);
     this.store.run('UPDATE prizes SET secret=? WHERE event_id=? AND slot=?', this.vault.seal(content, `prize:${eventId}:${slot}`), eventId, slot);
   }
@@ -431,7 +431,7 @@ export class Engine {
       channelId = await this.transport.prepareDM(claim.user_id);
       this.guard();
       const prize = this.store.get('SELECT secret FROM prizes WHERE event_id=? AND slot=?', claim.event_id, claim.slot);
-      content = this.direct(event.id)?this.contactContent(event):this.vault.open(prize.secret, `prize:${claim.event_id}:${claim.slot}`);
+      content = this.vault.open(prize.secret, `prize:${claim.event_id}:${claim.slot}`);
     } catch {
       this.store.run("UPDATE claims SET status='DELIVERY_FAILED',last_error='PREPARE_FAILED' WHERE id=? AND status='PREPARING'", claimId);
       this.store.queue('deliveryIssue', claimId, this.now(), `:prepare:${this.now()}`);
@@ -505,21 +505,15 @@ export class Engine {
     });
     this.dirty.add(eventId);
   }
-  direct(eventId) {return Boolean(this.store.get('SELECT event_id FROM direct_events WHERE event_id=?',eventId));}
-  contactContent(event) {return {text:`실물·직접 전달 상품입니다.\n주최자 <@${event.owner_id}>에게 개인 DM으로 연락해주세요.\n이름·주소·연락처는 봇에 제출하지 마세요.\n이 안내는 배송·실물 수령 완료를 뜻하지 않습니다.\n\n이벤트 번호: ${event.id}`,images:[]};}
-  setDeliveryMode(guildId,actor,eventId,direct) {
+  direct(eventId,slot) {return isDirect(this.store,eventId,slot);}
+  deliverySummary(eventId){return deliverySummary(this.store,eventId);}
+  contactContent(event,slot) {return {text:`${slot}번 실물·직접 전달 상품입니다.\n주최자 <@${event.owner_id}>에게 개인 DM으로 연락해주세요.\n이름·주소·연락처는 봇에 제출하지 마세요.\n이 안내는 배송·실물 수령 완료를 뜻하지 않습니다.\n\n이벤트 번호: ${event.id}`,images:[]};}
+  setDeliveryMode(guildId,actor,eventId,slot,direct) {
     this.guard();const event=this.event(eventId,guildId);
     if(event.owner_id!==actor.userId||event.status!=='DRAFT')fail('본인의 초안에서만 전달 방식을 바꿀 수 있어요.');
-    this.store.tx(()=>{
-      if(direct) {
-        this.store.run('INSERT INTO direct_events(event_id) VALUES (?) ON CONFLICT(event_id) DO UPDATE SET event_id=excluded.event_id',eventId);
-        // 디지털 상품을 이미 등록했다면 명시적으로 확인한 방식 변경 시 삭제합니다.
-        for(let slot=1;slot<=event.winner_count;slot++)this.store.run('UPDATE prizes SET secret=? WHERE event_id=? AND slot=?',this.vault.seal(this.contactContent(event),`prize:${eventId}:${slot}`),eventId,slot);
-      } else if(this.direct(eventId)) {
-        this.store.run('DELETE FROM direct_events WHERE event_id=?',eventId);
-        this.store.run('UPDATE prizes SET secret=NULL WHERE event_id=?',eventId);
-      }
-    });
+    if(!Number.isInteger(slot)||slot<1||slot>event.winner_count||typeof direct!=='boolean')fail('상품 자리와 전달 방식을 확인해주세요.');
+    if(this.direct(eventId,slot)===direct)return;
+    this.store.run('UPDATE prizes SET delivery_mode=?,secret=? WHERE event_id=? AND slot=?',direct?'DIRECT':'DIGITAL',direct?this.vault.seal(this.contactContent(event,slot),`prize:${eventId}:${slot}`):null,eventId,slot);
   }
   requireHostAllowed(guildId,userId) {
     if(this.store.get('SELECT user_id FROM host_blocks WHERE guild_id=? AND user_id=? AND active=1',guildId,userId))fail('이 서버에서 이벤트 주최가 제한된 계정이에요. 관리자에게 문의해주세요.');
