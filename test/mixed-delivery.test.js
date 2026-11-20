@@ -54,7 +54,7 @@ test('자리별 방식은 주최자 초안에서만 바꾸고 다른 서버·잘
   assert.throws(()=>f.engine.setDeliveryMode(GUILD,MANAGER,eid,1,true),/본인의 초안/);assert.throws(()=>f.engine.setDeliveryMode(OTHER_GUILD,HOST,eid,1,true),/이 서버/);
   for(const slot of [0,4,NaN])assert.throws(()=>f.engine.setDeliveryMode(GUILD,HOST,eid,slot,true),/상품 자리/);
   const legacy=interaction(HOST,`flow:mode:${eid}:direct`);await handler(f.engine,f.transport)(legacy);assert.match(legacy.replies[0].content,/상품 자리/);assert.deepEqual(f.engine.deliverySummary(eid).directSlots,[]);
-  const view=await new DraftFlow(f.engine,f.transport).view(GUILD,HOST,eid,'review');assert.match(JSON.stringify(view),/디지털 상품 번호/);assert.equal(view.components.length<=5,true);
+  const view=await new DraftFlow(f.engine,f.transport).view(GUILD,HOST,eid,'review');assert.match(JSON.stringify(view),/상품 번호 · 실물 \/ 디지털/);assert.equal(view.components.length<=5,true);
 });
 
 test('혼합 이벤트 리롤은 해당 자리의 실물 방식을 유지하고 디지털 자리의 내용도 보존한다',async t=>{

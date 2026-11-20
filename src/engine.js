@@ -606,7 +606,7 @@ export class Engine {
   }
   queueApplicationUpdate(eventId) {
     const event=this.store.event(eventId),application=this.store.get("SELECT message_id FROM jobs WHERE kind='application' AND ref_id=?",eventId);
-    if(event&&application?.message_id)this.store.queue('applicationUpdate',eventId,this.now(),`:${event.status}:${event.public_message_id||'unposted'}`);
+    if(event&&application?.message_id)this.store.queue('applicationUpdate',eventId,this.now(),`:${event.status}:${event.public_message_id||'unposted'}:v2`);
   }
   bumpEvents(guildId,actor) {
     this.guard();this.requireManager(guildId,actor);

@@ -3,6 +3,7 @@ import { ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder,ContainerBui
 import { files } from './media.js';
 import { HOST_NOTICE_KINDS } from './engine.js';
 import { isDirect,deliverySummary,productInfo } from './delivery.js';
+import { eventTimesText } from './time-limits.js';
 
 export const statuses = {
   DRAFT: '초안', PENDING: '승인 대기', STARTING: '시작 게시 대기', RUNNING: '참여 중', DRAWN: '추첨 완료·수령 진행',
@@ -42,16 +43,15 @@ export class DiscordTransport {
     const embed = new EmbedBuilder().setColor(0x5865f2).setTitle(event.title).setDescription(event.description)
       .addFields(
         { name: '주최자', value: `<@${event.owner_id}>`, inline: true },
-        { name: '당첨 인원', value: `${event.winner_count}명`, inline: true },
-        { name: '참여자', value: `${entries}명`, inline: true },
+        { name: '당첨 인원 / 참여자', value: `${event.winner_count}명 / ${entries}명`, inline: true },
         { name: '상태', value: statuses[event.status] || event.status, inline: true },
-        { name: '수령 제한시간', value: `${event.claim_ms / 60000}분`, inline: true },
+        { name: '진행 시간 / 수령 시간', value: eventTimesText(event), inline: true },
         { name: '참여 가능 역할 (하나 이상)', value: roles(event.allow_roles) },
         { name: '참여 거절 역할', value: roles(event.deny_roles) },
       ).setFooter({ text: `GiveON · 이벤트 ${event.id}` });
     if (event.ends_at) embed.addFields({ name: '참여 마감', value: time(event.ends_at) });
     const summary=deliverySummary(this.store,event.id);
-    embed.addFields({name:'전달 방식',value:summary.label},{name:'실물·직접 전달 상품 번호',value:summary.directSlots.join(', ')||'없음'},{name:'디지털 상품 번호',value:summary.digitalSlots.join(', ')||'없음'});
+    embed.addFields({name:'전달 방식',value:summary.label},{name:'상품 번호 · 실물 / 디지털',value:`${summary.directSlots.join(', ')||'없음'} / ${summary.digitalSlots.join(', ')||'없음'}`});
     for(const slot of this.store.all('SELECT slot FROM prizes WHERE event_id=? ORDER BY slot LIMIT 3',event.id)){const p=productInfo(this.store,this.vault,event,slot.slot,revealPrivate);embed.addFields({name:`${p.slot}번 상품`,value:p.name});}
     if (event.proof_required) embed.addFields({ name: '수령 전 인증 필요', value: event.proof_instructions },{name:'인증 제출 기한',value:'수령 버튼을 누른 후 5분 내 텍스트·이미지를 제출해주세요.'});
     return embed;
@@ -63,7 +63,7 @@ export class DiscordTransport {
   publicEvent(event,notificationRoles=[]) {
     const roleText=value=>JSON.parse(value).map(id=>`<@&${id}>`).join(', ')||'없음';
     const entries=this.store.get('SELECT count(*) n FROM entries WHERE event_id=?',event.id).n;
-    let body=`## ${event.title}\n${event.description}\n\n주최자 <@${event.owner_id}>\n당첨 **${event.winner_count}명** · 참여 **${entries}명**\n상태: **${statuses[event.status]}** · 수령 제한 **${event.claim_ms/60000}분**\n참여 가능: ${roleText(event.allow_roles)}\n참여 차단: ${roleText(event.deny_roles)}`;
+    let body=`## ${event.title}\n${event.description}\n\n주최자 <@${event.owner_id}>\n당첨 인원 / 참여자: **${event.winner_count}명 / ${entries}명**\n상태: **${statuses[event.status]}**\n진행 시간 / 수령 시간: **${eventTimesText(event)}**\n참여 가능: ${roleText(event.allow_roles)}\n참여 차단: ${roleText(event.deny_roles)}`;
     if(event.ends_at)body+=`\n참여 마감: ${time(event.ends_at)}`;
     const summary=deliverySummary(this.store,event.id);body+=`\n전달 방식: **${summary.label}**`;
     if(summary.directSlots.length)body+='\n실물 상품은 주최자와 개인 DM으로 연락해주세요. 주소는 봇에 제출하지 마세요.';
@@ -87,7 +87,8 @@ export class DiscordTransport {
       .setFooter({text:`job:application:${event.id}`})
       .addFields({name:'검토 상태',value:label},{name:'진행 상태',value:statuses[event.status]||event.status,inline:true},
         {name:'이벤트 번호',value:event.id},{name:'주최자',value:`<@${event.owner_id}>`},
-        {name:'설정',value:`${event.winner_count}명 / 진행 ${event.duration_ms/60000}분 / 수령 ${event.claim_ms/60000}분 / 인증 ${event.proof_required?'필요':'없음'}`},
+        {name:'당첨 인원 / 인증',value:`${event.winner_count}명 / ${event.proof_required?'필요':'없음'}`,inline:true},
+        {name:'진행 시간 / 수령 시간',value:eventTimesText(event),inline:true},
         {name:'상품 전달 방식',value:deliverySummary(this.store,event.id).label},
         {name:'인증 안내',value:event.proof_instructions||'없음'},
         {name:'역할 조건',value:`허용: ${JSON.parse(event.allow_roles).map(id=>`<@&${id}>`).join(', ')||'제한 없음'}\n거절: ${JSON.parse(event.deny_roles).map(id=>`<@&${id}>`).join(', ')||'없음'}`});

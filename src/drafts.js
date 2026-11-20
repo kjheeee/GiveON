@@ -1,7 +1,7 @@
 import { EmbedBuilder,ButtonStyle,StringSelectMenuBuilder } from 'discord.js';
 import { UserError } from './engine.js';
 import { btn,row,back,payload,listView,conditionMenu } from './ui.js';
-import { timeLimitsText } from './time-limits.js';
+import { timeLimitsText,eventTimesText } from './time-limits.js';
 
 const roles=value=>JSON.parse(value||'[]');
 const mention=value=>roles(value).map(id=>`<@&${id}>`).join(', ')||'없음';
@@ -59,10 +59,10 @@ export class DraftFlow {
     }
     const template=saved?.template_id?this.engine.template(saved.template_id,gid):null;
     const embed=new EmbedBuilder().setTitle(e.title).setDescription(e.description).setColor(0x18e979).addFields(
-      {name:'진행 시간',value:`${e.duration_ms/60000}분`,inline:true},{name:'수령 시간',value:`${e.claim_ms/60000}분`,inline:true},{name:'당첨 인원',value:`${e.winner_count}명`,inline:true},
+      {name:'진행 시간 / 수령 시간',value:eventTimesText(e),inline:true},{name:'당첨 인원',value:`${e.winner_count}명`,inline:true},
       {name:'참여 가능 역할',value:mention(e.allow_roles)},{name:'참여 차단 역할',value:mention(e.deny_roles)},
       {name:'인증',value:e.proof_required?e.proof_instructions:'없음'},
-      {name:'전달 방식',value:this.engine.deliverySummary(eid).label},{name:'실물·직접 전달 상품 번호',value:this.engine.deliverySummary(eid).directSlots.join(', ')||'없음'},{name:'디지털 상품 번호',value:this.engine.deliverySummary(eid).digitalSlots.join(', ')||'없음'},
+      {name:'전달 방식',value:this.engine.deliverySummary(eid).label},{name:'상품 번호 · 실물 / 디지털',value:`${this.engine.deliverySummary(eid).directSlots.join(', ')||'없음'} / ${this.engine.deliverySummary(eid).digitalSlots.join(', ')||'없음'}`},
     );
     if(template)embed.addFields({name:'적용 템플릿',value:template.name});
     return payload(`**5/5 · 최종 확인**\n내용을 확인하고 승인 요청을 누르세요. 상품 전달 원문은 이 화면에 표시하지 않습니다.\n서버 시간 범위: ${timeLimitsText(this.engine.timeLimits(gid))}\n범위가 변경된 경우 기본 정보 수정에서 시간을 다시 입력해주세요.`,[

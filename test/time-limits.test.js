@@ -60,7 +60,7 @@ test('설정의 시간 범위 팝업은 READY 관리자만 열고 역할 해제�
 
 test('직접·템플릿 신청 팝업은 최신 범위를 안내하고 새 기본값은 허용 범위 안으로 맞춘다',async t=>{
   const f=fixture(t),handle=handler(f.engine,f.transport);f.engine.setTimeLimits(GUILD,MANAGER,{duration_min:120,duration_max:200,claim_min:2,claim_max:10});
-  const choose=interaction(HOST,'ui:create');await handle(choose);assert.match(choose.replies[0].content,/진행 120~200분/);
+  const choose=interaction(HOST,'ui:create');await handle(choose);assert.match(choose.replies[0].content,/진행 시간 \/ 수령 시간\n120~200분 \/ 2~10분/);
   const tid=f.engine.createTemplate(GUILD,MANAGER,'사전 안내','문구');f.engine.updateTemplate(GUILD,MANAGER,tid,{enabled:true});
   for(const open of [interaction(HOST,'flow:custom:new'),interaction(HOST,'flow:template:new',{values:[tid]},'select')]) {
     await handle(open);const form=textFields(open.modal);assert.equal(form.duration.value,'120');assert.equal(form.claim.value,'10');assert.match(form.duration.label,/120~200/);assert.match(form.claim.label,/2~10/);
