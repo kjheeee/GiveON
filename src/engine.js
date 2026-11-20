@@ -270,6 +270,7 @@ export class Engine {
       this.store.run("UPDATE events SET status='STARTING',approved_by=? WHERE id=?", actor.userId, eventId);
       this.store.queue('start', eventId, this.now());
       this.store.audit(eventId, null, 'APPROVED', actor.userId, this.now());
+      this.queueApplicationUpdate(eventId);
     });
   }
   rejectEvent(guildId, actor, eventId, reason = '관리자 검토 결과 거절되었습니다.') {
@@ -283,6 +284,7 @@ export class Engine {
       this.store.run('UPDATE prizes SET secret=NULL WHERE event_id=?',eventId);
       this.store.queue('rejected', eventId, this.now());
       this.store.audit(eventId, null, 'REJECTED', actor.userId, this.now());
+      this.queueApplicationUpdate(eventId);
     });
   }
   eligibility(event, actor) {
@@ -517,6 +519,7 @@ export class Engine {
       this.store.run("UPDATE prizes SET status='EXHAUSTED',secret=NULL WHERE event_id=? AND status IN ('ASSIGNED','AVAILABLE')", eventId);
       this.store.audit(eventId, null, 'CANCELLED', actor.userId, this.now());
       this.store.queue('closed', eventId, this.now());
+      this.queueApplicationUpdate(eventId);
     });
     this.dirty.add(eventId);
   }
@@ -576,6 +579,27 @@ export class Engine {
     for(const claim of this.store.all("SELECT id,proof_version FROM claims WHERE status='REVIEW' AND proof IS NOT NULL"))this.store.queue('proof',claim.id,this.now(),`:host:${claim.proof_version}`);
     for(const claim of this.store.all("SELECT id,proof_version FROM claims WHERE status='SUBMITTING' AND feedback IS NOT NULL"))this.store.queue('rework',claim.id,this.now(),`:dm:${claim.proof_version}`);
     for (const row of this.store.all('SELECT id FROM events WHERE public_message_id IS NOT NULL')) this.dirty.add(row.id);
+    for(const job of this.store.all("SELECT ref_id FROM jobs WHERE kind='application' AND message_id IS NOT NULL"))this.queueApplicationUpdate(job.ref_id);
+  }
+  queueApplicationUpdate(eventId) {
+    const event=this.store.event(eventId),application=this.store.get("SELECT message_id FROM jobs WHERE kind='application' AND ref_id=?",eventId);
+    if(event&&application?.message_id)this.store.queue('applicationUpdate',eventId,this.now(),`:${event.status}:${event.public_message_id||'unposted'}`);
+  }
+  bumpEvents(guildId,actor) {
+    this.guard();this.requireManager(guildId,actor);
+    let queued=0,pending=0;
+    this.store.tx(()=>{
+      for(const event of this.store.all("SELECT id,public_message_id FROM events WHERE guild_id=? AND status='RUNNING' AND ends_at>? AND public_message_id IS NOT NULL ORDER BY created_at,id",guildId,this.now())) {
+        if(this.store.get("SELECT id FROM jobs WHERE kind='bump' AND ref_id=? AND status<>'DONE'",event.id)){pending++;continue;}
+        if(!this.store.get("SELECT channel_id FROM jobs WHERE kind='start' AND ref_id=?",event.id)?.channel_id)continue;
+        // 이전 메시지 번호는 재시작 후에도 동일 원본을 정리하기 위한 비밀 없는 작업 식별자입니다.
+        const jobId=`bump:${event.id}:${event.public_message_id}`;
+        if(this.store.get('SELECT id FROM jobs WHERE id=?',jobId)){pending++;continue;}
+        this.store.queue('bump',event.id,this.now(),`:${event.public_message_id}`);
+        this.store.audit(event.id,null,'BUMP_REQUESTED',actor.userId,this.now());queued++;
+      }
+    });
+    return {queued,pending};
   }
   finishJob(job, message) {
     this.store.tx(() => {
@@ -587,6 +611,14 @@ export class Engine {
         this.store.queue('hostStarted',event.id,this.now());
         this.dirty.add(event.id);
       }
+      if(job.kind==='bump') {
+        const oldId=job.id.split(':')[2];
+        this.store.run('UPDATE events SET public_message_id=? WHERE id=?',message.id,job.ref_id);
+        this.store.queue('retireEvent',job.ref_id,this.now(),`:${oldId}`);
+        this.store.run('UPDATE jobs SET channel_id=?,message_id=? WHERE id=?',message.channelId,oldId,`retireEvent:${job.ref_id}:${oldId}`);
+        this.dirty.add(job.ref_id);
+      }
+      if(['application','start','bump'].includes(job.kind))this.queueApplicationUpdate(job.ref_id);
       if (job.kind === 'winner') {
         const claim = this.store.claim(job.ref_id);
         const event = this.store.event(claim.event_id);
@@ -600,10 +632,22 @@ export class Engine {
       const claim = ['winner', 'proof', 'rework', 'denied', 'expired', 'received', 'deliveryIssue','hostReceived'].includes(job.kind) ? this.store.claim(job.ref_id) : null;
       const event = this.store.event(claim?.event_id || job.ref_id);
       if (!event) continue;
+      if(['applicationUpdate','retireEvent'].includes(job.kind)) {
+        try {
+          if(job.kind==='applicationUpdate')await this.transport.updateApplication(event);
+          else await this.transport.retireEvent(job,event);
+          this.guard();this.store.run("UPDATE jobs SET status='DONE',error_code=NULL WHERE id=?",job.id);
+        } catch(error) {
+          this.guard();
+          this.store.run('UPDATE jobs SET status=?,error_code=?,next_at=? WHERE id=?',error.code===10008?'DONE':'PENDING',error.code===10008?'MESSAGE_DELETED':'EDIT_RETRY',this.now()+60_000,job.id);
+        }
+        continue;
+      }
       if(HOST_NOTICE_KINDS.has(job.kind)&&!this.noticesEnabled(event.owner_id)) {
         this.store.run("UPDATE jobs SET status='DONE',error_code='NOTICE_DISABLED' WHERE id=?",job.id);continue;
       }
-      if ((job.kind === 'application' && event.status !== 'PENDING') ||
+      if ((job.kind === 'application' && event.status !== 'PENDING'&&job.status!=='UNKNOWN') ||
+        (job.kind==='bump'&&job.status!=='UNKNOWN'&&(event.status!=='RUNNING'||event.ends_at<=this.now())) ||
         (job.kind === 'start' && event.status !== 'STARTING') ||
         (job.kind === 'winner' && claim.status !== 'ANNOUNCING') ||
         (job.kind === 'proof' && (claim.status !== 'REVIEW' || !job.id.includes(':host:') || !job.id.endsWith(`:${claim.proof_version}`))) ||
@@ -660,6 +704,7 @@ export class Engine {
       await this.processJobs();
       for (const eventId of this.dirty) {
         const event = this.store.event(eventId);
+        this.queueApplicationUpdate(eventId);
         if (!event?.public_message_id) { this.dirty.delete(eventId); continue; }
         try { await this.transport.updateEvent(event); this.dirty.delete(eventId); }
         catch { /* 공개 상태 갱신은 다음 주기에 재시도합니다. */ }

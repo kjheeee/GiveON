@@ -78,6 +78,41 @@ export class DiscordTransport {
     try { return (await (await this.client.users.fetch(userId)).createDM()).id; }
     catch (error) { throw markDefinite(error); }
   }
+  applicationView(event) {
+    const decision=this.store.get("SELECT action,actor_id,created_at FROM audit WHERE event_id=? AND action IN ('APPROVED','REJECTED','CANCELLED') ORDER BY id DESC LIMIT 1",event.id);
+    const pending=event.status==='PENDING'||event.status==='DRAFT';
+    const label=pending?'⏳ 승인 대기':event.status==='REJECTED'?'❌ 거절 완료':event.status==='CANCELLED'?'⚪ 취소됨':'✅ 승인 완료';
+    const embed=new EmbedBuilder().setColor(pending?0xfee75c:event.status==='REJECTED'?0xed4245:event.status==='CANCELLED'?0x99aab5:0x57f287)
+      .setTitle(`이벤트 ${label}`).setDescription(`**${event.title}**\n${event.description}`)
+      .setFooter({text:`job:application:${event.id}`})
+      .addFields({name:'검토 상태',value:label},{name:'진행 상태',value:statuses[event.status]||event.status,inline:true},
+        {name:'이벤트 번호',value:event.id},{name:'주최자',value:`<@${event.owner_id}>`},
+        {name:'설정',value:`${event.winner_count}명 / 진행 ${event.duration_ms/60000}분 / 수령 ${event.claim_ms/60000}분 / 인증 ${event.proof_required?'필요':'없음'}`},
+        {name:'상품 전달 방식',value:deliverySummary(this.store,event.id).label},
+        {name:'인증 안내',value:event.proof_instructions||'없음'},
+        {name:'역할 조건',value:`허용: ${JSON.parse(event.allow_roles).map(id=>`<@&${id}>`).join(', ')||'제한 없음'}\n거절: ${JSON.parse(event.deny_roles).map(id=>`<@&${id}>`).join(', ')||'없음'}`});
+    if(decision)embed.addFields({name:'처리자',value:decision.actor_id?`<@${decision.actor_id}>`:'기록 없음',inline:true},{name:'처리 시각',value:`<t:${Math.floor(decision.created_at/1000)}:F>`,inline:true});
+    if(event.status==='REJECTED')embed.addFields({name:'거절 사유',value:event.rejection_reason||'사유 없음'});
+    const components=[button(`ui:manageevent:${event.id}`,'이벤트·상품 확인')];
+    if(pending)components.push(button(`eapprove:${event.id}`,'승인·시작',ButtonStyle.Success),button(`ereject:${event.id}`,'거절',ButtonStyle.Danger));
+    const channel=this.store.get("SELECT channel_id FROM jobs WHERE kind='start' AND ref_id=?",event.id)?.channel_id;
+    if(event.public_message_id&&channel)components.push(new ButtonBuilder().setStyle(ButtonStyle.Link).setLabel('이벤트 바로가기').setURL(`https://discord.com/channels/${event.guild_id}/${channel}/${event.public_message_id}`));
+    return {content:'',embeds:[embed],components:[row(...components)],allowedMentions:{parse:[],users:[],roles:[]}};
+  }
+  async updateApplication(event) {
+    const job=this.store.get("SELECT message_id,channel_id FROM jobs WHERE kind='application' AND ref_id=?",event.id);
+    if(!job?.message_id||!job.channel_id)return;
+    const channel=await this.client.channels.fetch(job.channel_id),message=await channel.messages.fetch(job.message_id);
+    if(message.author.id!==this.client.user.id)throw new Error('APPLICATION_MESSAGE_IDENTITY_MISMATCH');
+    await channel.messages.edit(job.message_id,this.applicationView(this.store.event(event.id)));
+  }
+  async retireEvent(job,event) {
+    const channel=await this.client.channels.fetch(job.channel_id),message=await channel.messages.fetch(job.message_id);
+    if(message.author.id!==this.client.user.id)throw new Error('EVENT_MESSAGE_IDENTITY_MISMATCH');
+    const current=this.store.event(event.id);
+    const url=`https://discord.com/channels/${event.guild_id}/${job.channel_id}/${current.public_message_id}`;
+    await channel.messages.edit(job.message_id,{flags:MessageFlags.IsComponentsV2,content:null,embeds:[],components:[new TextDisplayBuilder().setContent(`이 이벤트는 최신 메시지로 이동했어요.\n[${event.title} · 최신 이벤트 보기](${url})`)],allowedMentions:{parse:[]}});
+  }
   async sendPrize(channelId, event, claim, content) {
     let sending = false;
     try {
@@ -96,6 +131,7 @@ export class DiscordTransport {
   async channelFor(job, event, claim) {
     if(job.kind==='proof')return job.id.includes(':host:')&&job.channel_id?job.channel_id:this.prepareDM(event.owner_id);
     if (job.channel_id) return job.channel_id;
+    if(job.kind==='bump')return this.store.get("SELECT channel_id FROM jobs WHERE kind='start' AND ref_id=?",event.id)?.channel_id;
     if(HOST_NOTICE_KINDS.has(job.kind))return this.prepareDM(event.owner_id);
     const settings = this.store.guild(event.guild_id);
     if (['application', 'deliveryIssue', 'drawIssue'].includes(job.kind)) return settings.manager_channel;
@@ -128,14 +164,16 @@ export class DiscordTransport {
           embed.setTitle(direct?'당첨자에게 연락 안내 완료':'당첨자 상품 수령 완료').setDescription(`이벤트: ${event.title}\n${claim.slot}번 상품: ${productInfo(this.store,this.vault,event,claim.slot,true).name}\n이벤트 번호: ${event.id}\n당첨자: <@${claim.user_id}>\n당첨 번호: ${claim.id}${direct?'\n실물 전달은 당첨자와 개인 DM으로 진행해주세요.':''}\n진행 알림 설정: /gon alert on 또는 /gon alert off`);break;
         }
         case 'application':
-          embed.setTitle('이벤트 승인 요청').setDescription(`**${event.title}**\n${event.description}`)
-            .addFields({ name: '이벤트 번호', value: event.id }, { name: '주최자', value: `<@${event.owner_id}>` },
-              { name: '설정', value: `${event.winner_count}명 / 진행 ${event.duration_ms / 60000}분 / 수령 ${event.claim_ms / 60000}분 / 인증 ${event.proof_required ? '필요' : '없음'}` },
-              { name: '상품 전달 방식', value: deliverySummary(this.store,event.id).label },
-              { name: '인증 안내', value: event.proof_instructions || '없음' },
-              { name: '역할 조건', value: `허용: ${JSON.parse(event.allow_roles).map(id => `<@&${id}>`).join(', ') || '제한 없음'}\n거절: ${JSON.parse(event.deny_roles).map(id => `<@&${id}>`).join(', ') || '없음'}` });
-          components = [row(button(`ui:manageevent:${event.id}`,'이벤트·상품 확인'),button(`eapprove:${event.id}`, '승인·시작', ButtonStyle.Success), button(`ereject:${event.id}`, '거절', ButtonStyle.Danger))];
-          break;
+          sending=true;
+          return await channel.send({...this.applicationView(this.store.event(event.id)),nonce:nonce(job.id),enforceNonce:true});
+        case 'bump': {
+          const current=this.store.event(event.id);
+          if(current.status!=='RUNNING'||current.ends_at<=Date.now())throw Object.assign(new Error('EVENT_ENDED'),{definite:true,code:'EVENT_ENDED'});
+          const body=this.publicEvent(current);
+          body.components.push(new TextDisplayBuilder().setContent(`-# job:${job.id}`));
+          sending=true;
+          return await channel.send({...body,allowedMentions:{parse:[],users:[],roles:[]},nonce:nonce(job.id),enforceNonce:true});
+        }
         case 'start':
           content = JSON.parse(this.store.guild(event.guild_id).mention_roles).map(id => `<@&${id}>`).join(' ');
           roles.push(...JSON.parse(this.store.guild(event.guild_id).mention_roles));
@@ -183,7 +221,7 @@ export class DiscordTransport {
     for (let page = 0; page < 10; page++) {
       const messages = await channel.messages.fetch({ limit: 100, ...(before ? { before } : {}) });
       const found = messages.find(message => message.author.id === this.client.user.id &&
-        ((deliveryNonce && String(message.nonce) === deliveryNonce) || (componentId&&JSON.stringify((message.components||[]).map(c=>c.toJSON?c.toJSON():c)).includes(`"custom_id":"${componentId}"`)) || message.embeds.some(embed => embed.footer?.text === marker || embed.footer?.text?.endsWith(` · ${marker}`))));
+        ((deliveryNonce && String(message.nonce) === deliveryNonce) || (componentId&&JSON.stringify((message.components||[]).map(c=>c.toJSON?c.toJSON():c)).includes(`"custom_id":"${componentId}"`)) || message.embeds.some(embed => embed.footer?.text === marker || embed.footer?.text?.endsWith(` · ${marker}`)) || (marker.startsWith('job:bump:')&&(message.components||[]).some(c=>(c.content||c.data?.content)===`-# ${marker}`))));
       if (found) return found;
       if (!messages.size || messages.size < 100 || messages.last().createdTimestamp < since - 60_000) return null;
       before = messages.last().id;
@@ -193,6 +231,7 @@ export class DiscordTransport {
   findPrize(claim) { return this.findMessage(claim.dm_channel_id, `giveaway-delivery:${claim.id}`, claim.send_started, claim.delivery_nonce); }
   async findNotification(job, event, claim) {
     const channel=await this.channelFor(job,event,claim);
+    if(job.kind==='bump')return this.findMessage(channel,`job:${job.id}`,job.created_at,nonce(job.id));
     if(job.kind==='proof')return this.findMessage(channel,`job:${job.id}`,job.created_at,null,`papprove:${claim.id}:${claim.proof_version}`);
     if(job.kind==='rework')return this.findMessage(channel,`job:${job.id}`,job.created_at,null,`ui:proofupload:${claim.id}:${claim.proof_version}`);
     if(job.kind==='start') {

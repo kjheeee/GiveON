@@ -11,6 +11,7 @@ export const commands = [
   new SlashCommandBuilder().setName('gon').setDescription('GiveON 이벤트 관리·조회·알림 설정').setContexts(InteractionContextType.Guild)
     .addSubcommand(command=>command.setName('init').setDescription('관리자 초기설정 팝업과 신청 안내 게시'))
     .addSubcommand(command=>command.setName('settings').setDescription('초기설정 완료 후 관리자 설정 화면 열기'))
+    .addSubcommand(command=>command.setName('bump').setDescription('관리자 전용 진행 중 이벤트를 원래 채널의 최신 메시지로 재게시'))
     .addSubcommand(command=>command.setName('log').setDescription('이벤트·당첨 번호로 관련 기록 조회')
       .addStringOption(option=>option.setName('id').setDescription('이벤트·당첨 번호 또는 giveaway-delivery:번호').setRequired(true).setMaxLength(80)))
     .addSubcommand(command=>command.setName('reqblock').setDescription('관리자 전용 사용자 주최 제한·사유 기록')

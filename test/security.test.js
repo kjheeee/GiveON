@@ -42,10 +42,10 @@ test('이미지는 Discord HTTPS 첨부만 허용하고 MIME·확장자가 아�
   await assert.rejects(readContent('', [{ ...attachment, size: 9 * 1024 * 1024 }]), /8MiB/);
 });
 
-test('명령은 gon의 init·settings·log·reqblock·alert on/off로만 등록한다', () => {
+test('명령은 gon의 init·settings·bump·log·reqblock·alert on/off로만 등록한다', () => {
   const definitions = commands.map(c => c.toJSON());
   assert.deepEqual(definitions.map(c=>c.name),['gon']);
-  assert.deepEqual(definitions[0].options.map(c=>c.name),['init','settings','log','reqblock','alert']);
+  assert.deepEqual(definitions[0].options.map(c=>c.name),['init','settings','bump','log','reqblock','alert']);
   assert.deepEqual(definitions[0].options.find(c=>c.name==='alert').options.map(c=>c.name),['on','off']);
   assert.deepEqual(definitions[0].options.find(c=>c.name==='reqblock').options.map(c=>[c.name,c.required]),[['user',true],['reason',true]]);
   assert.equal(new Set(definitions.map(c => c.name)).size, definitions.length);

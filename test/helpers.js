@@ -68,6 +68,8 @@ export function fixture(t, suppliedStore) {
     },
     async findNotification(job) { return notifications.get(job.id) || null; },
     async updateEvent() {},
+    async updateApplication() {},
+    async retireEvent() {},
   };
   const engine = new Engine(store, encryption, transport, { owners: [OWNER.userId], now: () => clock, rng: () => 0 });
   engine.configure(GUILD, OWNER, 'manager_roles', [MANAGER_ROLE]);

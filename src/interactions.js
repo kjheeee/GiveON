@@ -168,6 +168,11 @@ export function handler(engine,transport) {
       if(mayOpenModal) await defer();
       if (chat) {
         if(command==='settings')return adminView(i,a);
+        if(command==='bump') {
+          setup.requireReady(i.guildId,a);
+          const result=engine.bumpEvents(i.guildId,a);
+          return respond(i,payload(`진행 중 이벤트 **${result.queued}개**의 최신 메시지 재게시를 예약했어요.${result.pending?`\n이미 처리 대기 중: ${result.pending}개`:''}\n각 이벤트의 원래 채널에 순서대로 게시합니다. 참가자·마감 시간은 유지하고 역할 알림은 다시 보내지 않아요.`,[back()]));
+        }
         if(command==='alert:on'||command==='alert:off') {
           engine.setNotices(a,command==='alert:on');
           return respond(i,payload(`내 이벤트 생성·진행 승인·당첨자 수령 알림 DM을 **${command==='alert:on'?'켰어요':'껐어요'}**.\n계정별로 모든 서버에 적용됩니다.\n상품 전달과 인증·보완 안내는 별도로 수신합니다.`,[back()]));
