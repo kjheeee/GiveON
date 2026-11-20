@@ -91,7 +91,7 @@ test('게시 실패는 비공개 재시도 화면을 유지하고 중복 완료 
 });
 test('실제 모달 필드 구조로 init→채널팝업→역할팝업→비공개확인→완료만 게시한다',async t=>{
   const f=setup(t),handle=handler(f.engine,f.transport),client={guilds:{async fetch(){return f.guild;}}};
-  const request=(id,type,fields)=>({customId:id,commandName:type==='chat'?id:undefined,guildId:GUILD,channelId:EVENT,user:{id:OWNER.userId},client,fields,
+  const request=(id,type,fields)=>({customId:id,commandName:type==='chat'?'gon':undefined,options:{getSubcommandGroup:()=>null,getSubcommand:()=>id},guildId:GUILD,channelId:EVENT,user:{id:OWNER.userId},client,fields,
     inGuild:()=>true,isChatInputCommand:()=>type==='chat',isButton:()=>type==='button',isModalSubmit:()=>type==='modal',isAnySelectMenu:()=>false,
     async showModal(modal){assert.equal(this.deferred,undefined);this.modal=modal.toJSON();this.replied=true;},async deferReply(options){this.deferred=true;this.flags=options.flags;},async editReply(data){this.response=data;},async reply(data){this.response=data;},
   });

@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import { ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder,ContainerBuilder,TextDisplayBuilder,MessageFlags } from 'discord.js';
 import { files } from './media.js';
+import { HOST_NOTICE_KINDS } from './engine.js';
 
 export const statuses = {
   DRAFT: '초안', PENDING: '승인 대기', STARTING: '시작 게시 대기', RUNNING: '참여 중', DRAWN: '추첨 완료·수령 진행',
@@ -81,26 +82,14 @@ export class DiscordTransport {
           .setDescription(content.text || '첨부된 상품 이미지를 확인해주세요.')
           .setFooter({ text: `giveaway-delivery:${claim.id}` })],
         files: files(content, 'prize'), allowedMentions: { parse: [] },
-        components:[row(button(`mod:reportclaim:${claim.id}`,'전달 내용 신고',ButtonStyle.Danger))],
         nonce: claim.delivery_nonce, enforceNonce: true,
       });
     } catch (error) { if (!sending) error.definite = true; throw markDefinite(error); }
   }
-  async sendReport(channelId,report,content) {
-    let sending=false;
-    try {
-      const channel=await this.client.channels.fetch(channelId);sending=true;
-      return await channel.send({embeds:[new EmbedBuilder().setColor(0xed4245).setTitle('이벤트·상품 신고')
-        .setDescription(content.text||'(첨부된 신고 증거를 확인해주세요.)')
-        .addFields({name:'상품 · 이벤트',value:`${report.event.title}\n${report.event.id}`},{name:'주최자 · 신고자',value:`<@${report.event.owner_id}> · <@${report.reporterId}>`},
-          {name:'당첨 번호',value:report.claim?.id||'이벤트 자체 신고'})
-        .setFooter({text:`giveon-report:${report.id}`})],files:files(content,'report'),
-        components:[row(button(`mod:view:${report.id}`,'신고 검토'))],allowedMentions:{parse:[]},nonce:nonce(`report:${report.id}`),enforceNonce:true});
-    } catch(error){if(!sending)error.definite=true;throw markDefinite(error);}
-  }
   async channelFor(job, event, claim) {
     if(job.kind==='proof')return job.id.includes(':host:')&&job.channel_id?job.channel_id:this.prepareDM(event.owner_id);
     if (job.channel_id) return job.channel_id;
+    if(HOST_NOTICE_KINDS.has(job.kind))return this.prepareDM(event.owner_id);
     const settings = this.store.guild(event.guild_id);
     if (['application', 'deliveryIssue', 'drawIssue'].includes(job.kind)) return settings.manager_channel;
     if (['rejected'].includes(job.kind)) return this.prepareDM(event.owner_id);
@@ -123,6 +112,14 @@ export class DiscordTransport {
       let components = [], content = '';
       const users = [], roles = [];
       switch (job.kind) {
+        case 'hostCreated':
+          embed.setTitle('이벤트 초안 생성').setDescription(`상품: ${event.title}\n이벤트 번호: ${event.id}\n내 신청에서 내용을 완성하고 승인 요청을 진행해주세요.\n진행 알림 설정: /gon alert on 또는 /gon alert off`);break;
+        case 'hostStarted':
+          embed.setTitle('이벤트 진행 승인·게시 완료').setDescription(`상품: ${event.title}\n이벤트 번호: ${event.id}\n참여 마감: ${time(event.ends_at)}\n진행 알림 설정: /gon alert on 또는 /gon alert off`);break;
+        case 'hostReceived': {
+          const direct=Boolean(this.store.get('SELECT event_id FROM direct_events WHERE event_id=?',event.id));
+          embed.setTitle(direct?'당첨자에게 연락 안내 완료':'당첨자 상품 수령 완료').setDescription(`상품: ${event.title}\n이벤트 번호: ${event.id}\n당첨자: <@${claim.user_id}>\n자리: ${claim.slot}\n당첨 번호: ${claim.id}${direct?'\n실물 전달은 당첨자와 개인 DM으로 진행해주세요.':''}\n진행 알림 설정: /gon alert on 또는 /gon alert off`);break;
+        }
         case 'application':
           embed.setTitle('이벤트 승인 요청').setDescription(`**${event.title}**\n${event.description}`)
             .addFields({ name: '이벤트 번호', value: event.id }, { name: '주최자', value: `<@${event.owner_id}>` },
@@ -165,6 +162,7 @@ export class DiscordTransport {
         }
         default: throw Object.assign(new Error('알림 종류 오류'), { definite: true });
       }
+      if(HOST_NOTICE_KINDS.has(job.kind)&&this.store.get('SELECT enabled FROM notification_prefs WHERE user_id=?',event.owner_id)?.enabled===0)throw Object.assign(new Error('NOTICE_DISABLED'),{code:'NOTICE_DISABLED',definite:true});
       sending = true;
       const reply=['winner','closed'].includes(job.kind)&&event.public_message_id?{messageReference:event.public_message_id,failIfNotExists:false}:undefined;
       return await channel.send({ content, embeds: [embed], components, allowedMentions: { parse: [], users, roles, ...(reply?{repliedUser:false}:{}) }, ...(reply?{reply}:{}), nonce: nonce(job.id), enforceNonce: true });

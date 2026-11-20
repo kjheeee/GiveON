@@ -36,7 +36,7 @@ export function contentModal(id,title,slot=null,instructions='') {
   if(instructions) modal.addTextDisplayComponents(new TextDisplayBuilder().setContent(instructions));
   if (slot !== null) modal.addLabelComponents(input('slot','상품 자리 번호',3,false,true,String(slot)));
   return modal.addLabelComponents(
-    input('text',id.startsWith('form:proof:')?'인증 메시지 (사진만 제출해도 됩니다)':id.startsWith('form:report:')?'신고 내용 (개인정보·상품 코드는 가려주세요)':'전달할 메시지 (이미지만 첨부해도 됩니다)',1800,true,false),
+    input('text',id.startsWith('form:proof:')?'인증 메시지 (사진만 제출해도 됩니다)':'전달할 메시지 (이미지만 첨부해도 됩니다)',1800,true,false),
     new LabelBuilder().setLabel('이미지 첨부').setDescription('최대 2장, 합계 8MiB. PNG·JPG·GIF·WebP')
       .setFileUploadComponent(new FileUploadBuilder().setCustomId('images').setMinValues(0).setMaxValues(2).setRequired(false).setFileTypes('.png','.jpg','.jpeg','.gif','.webp')),
   );
@@ -100,7 +100,6 @@ export function eventView(engine,transport,guildId,actor,eventId,page=0) {
     if(people.page+1<people.pages)nav.push(btn(`ui:event:${eventId}:${people.page+1}`,'다음',ButtonStyle.Secondary));
     nav.push(btn(`ui:event:${eventId}:${people.page}`,'새로고침',ButtonStyle.Secondary));components.push(row(...nav));
   }
-  if(event.public_message_id)components.push(row(btn(`mod:reportevent:${eventId}`,'이벤트 신고',ButtonStyle.Danger)));
   components.push(back());
   return payload(`이벤트 번호: ${eventId}${own||manager ? `\n보관 중인 상품: ${count}건` : ''}${event.rejection_reason ? `\n거절 사유: ${event.rejection_reason}` : ''}`,components,[embed]);
 }
@@ -124,7 +123,6 @@ export function claimView(engine,guildId,actor,claimId,managerView=false) {
     if (['ANNOUNCING','CLAIMABLE','SUBMITTING','REVIEW'].includes(claim.status)) actions.push(btn(`ui:reroll:${claimId}`,'이 자리 리롤',ButtonStyle.Danger));
   }
   const components=actions.length ? [row(...actions)] : [];
-  if(!managerView)components.push(row(btn(`mod:reportclaim:${claimId}`,'상품·전달 내용 신고',ButtonStyle.Danger)));
   components.push(back());
   return payload(description,components);
 }

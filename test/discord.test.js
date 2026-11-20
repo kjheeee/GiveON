@@ -25,7 +25,7 @@ function clientFixture() {
 export function interaction(user, customId, options = {}, type = 'button') {
   return {
     guildId: GUILD, user: { id: user.userId, bot: false }, customId, deferred: false, replies: [],
-    commandName:type==='chat'?customId:undefined,channelId:'100000000000022',
+    commandName:type==='chat'?'gon':undefined,options:{getSubcommandGroup:()=>null,getSubcommand:()=>customId},channelId:'100000000000022',
     inGuild: () => true, isChatInputCommand: () => type==='chat', isButton: () => type==='button', isModalSubmit: () => type==='modal',isAnySelectMenu:()=>type==='select',
     values:options.values||[],
     fields:{getTextInputValue:name=>options[name]||'',getUploadedFiles:()=>null},

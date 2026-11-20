@@ -32,3 +32,10 @@ test('MySQL의 당첨 자리 고유 제약은 동시 활성 당첨을 막고 암
   const encrypted=f.store.get('SELECT secret FROM prizes WHERE event_id=? AND slot=?',eid,claim.slot).secret;
   assert.ok(Buffer.isBuffer(encrypted));assert.ok(f.encryption.open(encrypted,`prize:${eid}:${claim.slot}`).text.includes(eid));
 });
+
+test('MySQL 구 주최 제한의 사유·해제 필드를 추가하고 기존 행을 보존한다',t=>{
+  const f=fixture(t);f.store.run('INSERT INTO host_blocks(guild_id,user_id,actor_id,created_at) VALUES (?,?,?,?)',GUILD,actor(90).userId,OWNER.userId,f.now());
+  for(const column of ['reason','active','released_by','released_at'])f.store.run(`ALTER TABLE host_blocks DROP COLUMN ${column}`);
+  f.store.close();const upgraded=new MySQLStore(mysqlTestOptions());t.after(()=>upgraded.close());
+  const row=upgraded.get('SELECT * FROM host_blocks WHERE user_id=?',actor(90).userId);assert.equal(row.active,1);assert.equal(row.reason,'');assert.equal(row.actor_id,OWNER.userId);
+});

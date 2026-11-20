@@ -2,6 +2,7 @@ import { randomBytes } from 'node:crypto';
 import { draw } from './draw.js';
 
 export const PROOF_MS = 5 * 60_000;
+export const HOST_NOTICE_KINDS = new Set(['hostCreated','hostStarted','hostReceived']);
 export class UserError extends Error {}
 const fail = message => { throw new UserError(message); };
 const list = value => JSON.parse(value || '[]');
@@ -17,6 +18,11 @@ export class Engine {
     this.ticking = false;
   }
   owner(actor) { return this.owners.includes(actor.userId); }
+  noticesEnabled(userId){return this.store.get('SELECT enabled FROM notification_prefs WHERE user_id=?',userId)?.enabled!==0;}
+  setNotices(actor,enabled){
+    this.guard();if(actor.isBot||!/^\d{15,22}$/.test(actor.userId)||typeof enabled!=='boolean')fail('본인의 알림 설정을 확인해주세요.');
+    this.store.run('INSERT INTO notification_prefs(user_id,enabled,updated_at) VALUES (?,?,?) ON CONFLICT(user_id) DO UPDATE SET enabled=excluded.enabled,updated_at=excluded.updated_at',actor.userId,Number(enabled),this.now());
+  }
   manager(guildId, actor) {
     return this.owner(actor) || hasRole(actor, list(this.store.guild(guildId).manager_roles));
   }
@@ -143,6 +149,7 @@ export class Engine {
         this.store.run("INSERT INTO draft_steps(event_id,step,slot,template_id,template_revision) VALUES (?,'items',1,?,?)",eventId,template.id,template.revision);
       }
       this.store.audit(eventId, null, 'CREATED', actor.userId, this.now());
+      this.store.queue('hostCreated',eventId,this.now());
     });
     return eventId;
   }
@@ -452,6 +459,7 @@ export class Engine {
       this.store.run("UPDATE prizes SET status='DELIVERED',secret=NULL WHERE event_id=? AND slot=?", claim.event_id, claim.slot);
       this.store.audit(claim.event_id, claimId, 'DELIVERED', claim.user_id, this.now());
       this.store.queue('received', claimId, this.now());
+      this.store.queue('hostReceived',claimId,this.now());
     });
     this.closeIfDone(claim.event_id);
   }
@@ -514,13 +522,19 @@ export class Engine {
     });
   }
   requireHostAllowed(guildId,userId) {
-    if(this.store.get('SELECT user_id FROM host_blocks WHERE guild_id=? AND user_id=?',guildId,userId))fail('이 서버에서 이벤트 주최가 제한된 계정이에요. 관리자에게 문의해주세요.');
+    if(this.store.get('SELECT user_id FROM host_blocks WHERE guild_id=? AND user_id=? AND active=1',guildId,userId))fail('이 서버에서 이벤트 주최가 제한된 계정이에요. 관리자에게 문의해주세요.');
   }
-  restrictHost(guildId,actor,userId,blocked) {
+  restrictHost(guildId,actor,userId,blocked,reason='') {
     this.guard();this.requireManager(guildId,actor);
     if(!/^\d{15,22}$/.test(userId))fail('대상 사용자를 확인해주세요.');
-    if(blocked)this.store.run('INSERT INTO host_blocks(guild_id,user_id,actor_id,created_at) VALUES (?,?,?,?) ON CONFLICT(guild_id,user_id) DO UPDATE SET actor_id=excluded.actor_id,created_at=excluded.created_at',guildId,userId,actor.userId,this.now());
-    else this.store.run('DELETE FROM host_blocks WHERE guild_id=? AND user_id=?',guildId,userId);
+    if(typeof blocked!=='boolean')fail('주최 제한 여부를 확인해주세요.');
+    if(blocked) {
+      if(typeof reason!=='string'||!reason.trim()||reason.length>500)fail('주최 제한 사유를 1~500자로 입력해주세요.');
+      this.store.run('INSERT INTO host_blocks(guild_id,user_id,actor_id,created_at,reason,active) VALUES (?,?,?,?,?,1) ON CONFLICT(guild_id,user_id) DO UPDATE SET actor_id=excluded.actor_id,created_at=excluded.created_at,reason=excluded.reason,active=1,released_by=NULL,released_at=NULL',guildId,userId,actor.userId,this.now(),reason.trim());
+    } else {
+      const changed=this.store.run('UPDATE host_blocks SET active=0,released_by=?,released_at=? WHERE guild_id=? AND user_id=? AND active=1',actor.userId,this.now(),guildId,userId);
+      if(!changed.changes)fail('현재 주최 제한 중인 사용자가 아니에요.');
+    }
   }
   lookup(guildId,actor,query) {
     this.guard();const raw=query.trim();
@@ -550,7 +564,6 @@ export class Engine {
     this.store.run("UPDATE claims SET status='SUBMITTING',upload_until=NULL,upload_token=NULL WHERE status='UPLOADING'");
     this.store.run("UPDATE claims SET status='DELIVERY_UNKNOWN',last_error='RESTART_DURING_SEND' WHERE status='SENDING'");
     this.store.run("UPDATE jobs SET status='UNKNOWN' WHERE status='SENDING'");
-    this.store.run("UPDATE reports SET status='UNKNOWN' WHERE status='SENDING'");
     for(const claim of this.store.all("SELECT id,proof_version FROM claims WHERE status='REVIEW' AND proof IS NOT NULL"))this.store.queue('proof',claim.id,this.now(),`:host:${claim.proof_version}`);
     for(const claim of this.store.all("SELECT id,proof_version FROM claims WHERE status='SUBMITTING' AND feedback IS NOT NULL"))this.store.queue('rework',claim.id,this.now(),`:dm:${claim.proof_version}`);
     for (const row of this.store.all('SELECT id FROM events WHERE public_message_id IS NOT NULL')) this.dirty.add(row.id);
@@ -562,6 +575,7 @@ export class Engine {
         const event = this.store.event(job.ref_id);
         this.store.run('UPDATE events SET public_message_id=? WHERE id=?', message.id, event.id);
         if (event.status === 'STARTING') this.store.run("UPDATE events SET status='RUNNING' WHERE id=?", event.id);
+        this.store.queue('hostStarted',event.id,this.now());
         this.dirty.add(event.id);
       }
       if (job.kind === 'winner') {
@@ -574,9 +588,12 @@ export class Engine {
   async processJobs() {
     for (const job of this.store.all("SELECT * FROM jobs WHERE status IN ('PENDING','UNKNOWN') AND next_at<=? ORDER BY created_at,id LIMIT 25", this.now())) {
       this.guard();
-      const claim = ['winner', 'proof', 'rework', 'denied', 'expired', 'received', 'deliveryIssue'].includes(job.kind) ? this.store.claim(job.ref_id) : null;
+      const claim = ['winner', 'proof', 'rework', 'denied', 'expired', 'received', 'deliveryIssue','hostReceived'].includes(job.kind) ? this.store.claim(job.ref_id) : null;
       const event = this.store.event(claim?.event_id || job.ref_id);
       if (!event) continue;
+      if(HOST_NOTICE_KINDS.has(job.kind)&&!this.noticesEnabled(event.owner_id)) {
+        this.store.run("UPDATE jobs SET status='DONE',error_code='NOTICE_DISABLED' WHERE id=?",job.id);continue;
+      }
       if ((job.kind === 'application' && event.status !== 'PENDING') ||
         (job.kind === 'start' && event.status !== 'STARTING') ||
         (job.kind === 'winner' && claim.status !== 'ANNOUNCING') ||
@@ -600,6 +617,9 @@ export class Engine {
         this.finishJob(job, message);
       } catch (error) {
         this.guard();
+        if(HOST_NOTICE_KINDS.has(job.kind)&&error.code==='NOTICE_DISABLED') {
+          this.store.run("UPDATE jobs SET status='DONE',error_code='NOTICE_DISABLED' WHERE id=?",job.id);continue;
+        }
         this.store.run('UPDATE jobs SET status=?,error_code=?,next_at=? WHERE id=?', job.status === 'UNKNOWN' ? 'UNKNOWN' : error.definite ? 'PENDING' : 'UNKNOWN', error.definite ? 'DISCORD_REJECTED' : 'RESULT_UNKNOWN', this.now() + 60_000, job.id);
       }
     }

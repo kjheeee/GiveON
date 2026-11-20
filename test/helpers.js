@@ -13,7 +13,9 @@ function testStore() {
   if(process.env.GIVEON_TEST_DRIVER!=='mysql')return new Store();
   const store=new MySQLStore(mysqlTestOptions());
   // 위에서 검증한 전용 테스트 DB만 초기화합니다. 운영 DB 이름은 허용하지 않습니다.
-  for(const table of ['reports','host_blocks','direct_events','audit','jobs','claims','entries','draft_steps','prizes','events','panels','setup_sessions','event_templates','guilds','runtime_lock'])store.run(`DELETE FROM ${table}`);
+  // 이전 테스트 DB에 남은 구 신고 메타데이터만 초기화합니다. 운영 DB에는 접근하지 않습니다.
+  if(store.columns('reports').length)store.run('DELETE FROM reports');
+  for(const table of ['notification_prefs','host_blocks','direct_events','audit','jobs','claims','entries','draft_steps','prizes','events','panels','setup_sessions','event_templates','guilds','runtime_lock'])store.run(`DELETE FROM ${table}`);
   return store;
 }
 
@@ -29,7 +31,7 @@ export const content = (text = '상품 비밀 코드 TEST-COUPON-1234') => ({ te
 
 export function interaction(user,customId,options={},type='button') {
   return {guildId:GUILD,user:{id:user.userId,bot:false},customId,deferred:false,replies:[],
-    commandName:type==='chat'?customId:undefined,channelId:'100000000000022',
+    commandName:type==='chat'?'gon':undefined,options:{getSubcommandGroup:()=>options.group||null,getSubcommand:()=>customId,getString:key=>options[key],getUser:key=>options[key]},channelId:'100000000000022',
     inGuild:()=>true,isChatInputCommand:()=>type==='chat',isButton:()=>type==='button',isModalSubmit:()=>type==='modal',isAnySelectMenu:()=>type==='select',
     values:options.values||[],fields:{getTextInputValue:name=>options[name]||'',getUploadedFiles:()=>null},
     async showModal(value){this.modal=value;this.replied=true;},async deferReply(options){this.deferOptions=options;this.deferred=true;},

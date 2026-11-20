@@ -8,7 +8,7 @@ import { createModal, contentModal, proofSettingsModal } from '../src/ui.js';
 
 function request(user,id,fields={},type='button',ephemeral=false) {
   return {
-    customId:id,commandName:type==='chat'?id:undefined,guildId:GUILD,channelId:'100000000000022',user:{id:user.userId,bot:false},
+    customId:id,commandName:type==='chat'?'gon':undefined,options:{getSubcommandGroup:()=>null,getSubcommand:()=>id==='setting'?'settings':id},guildId:GUILD,channelId:'100000000000022',user:{id:user.userId,bot:false},
     message:ephemeral?{flags:{has:flag=>flag===MessageFlags.Ephemeral}}:undefined,
     inGuild:()=>true,isChatInputCommand:()=>type==='chat',isButton:()=>type==='button',isModalSubmit:()=>type==='modal',isAnySelectMenu:()=>type==='select',
     fields:{getTextInputValue:key=>fields[key]||'',getUploadedFiles:()=>null},values:fields.values||[],replies:[],
@@ -50,9 +50,9 @@ test('공개 안내는 일반 이용 버튼 네 개만 제공하고 관리자 �
 
 test('setting은 초기설정 게시 완료 후 지정 관리자에게만 비공개 관리 화면을 연다',async t=>{
   const f=setup(t),notReady=request(MANAGER,'setting',{},'chat');
-  await f.handle(notReady);assert.match(notReady.replies[0].content,/먼저 \/init/);assert.equal(notReady.deferOptions.flags,MessageFlags.Ephemeral);
+  await f.handle(notReady);assert.match(notReady.replies[0].content,/먼저 \/gon init/);assert.equal(notReady.deferOptions.flags,MessageFlags.Ephemeral);
   f.store.run("INSERT INTO panels(guild_id,channel_id,message_id,state,updated_at) VALUES (?,?,'panel','PENDING',?)",GUILD,'100000000000022',Date.now());
-  const pending=request(MANAGER,'setting',{},'chat');await f.handle(pending);assert.match(pending.replies[0].content,/먼저 \/init/);
+  const pending=request(MANAGER,'setting',{},'chat');await f.handle(pending);assert.match(pending.replies[0].content,/먼저 \/gon init/);
   f.store.run("UPDATE panels SET state='READY' WHERE guild_id=?",GUILD);
   const allowed=request(MANAGER,'setting',{},'chat');await f.handle(allowed);assert.match(allowed.replies[0].content,/GiveON 관리자/);assert.equal(allowed.deferOptions.flags,MessageFlags.Ephemeral);
   const denied=request(HOST,'setting',{},'chat');await f.handle(denied);assert.match(denied.replies[0].content,/관리자만/);

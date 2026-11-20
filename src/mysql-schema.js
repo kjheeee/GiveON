@@ -46,10 +46,10 @@ export const mysqlSchema=[
   table(`CREATE TABLE IF NOT EXISTS setup_sessions (guild_id ${id} NOT NULL,user_id ${id} NOT NULL,token VARCHAR(64) NOT NULL,
     step VARCHAR(32) NOT NULL,data TEXT NOT NULL,baseline TEXT NOT NULL,PRIMARY KEY(guild_id,user_id),FOREIGN KEY(guild_id) REFERENCES guilds(id))`),
   table(`CREATE TABLE IF NOT EXISTS direct_events (event_id ${ref} PRIMARY KEY,FOREIGN KEY(event_id) REFERENCES events(id))`),
+  table(`CREATE TABLE IF NOT EXISTS notification_prefs (user_id ${id} PRIMARY KEY,enabled TINYINT NOT NULL DEFAULT 1,updated_at BIGINT NOT NULL)`),
   table(`CREATE TABLE IF NOT EXISTS host_blocks (guild_id ${id} NOT NULL,user_id ${id} NOT NULL,actor_id ${id} NOT NULL,
-    created_at BIGINT NOT NULL,PRIMARY KEY(guild_id,user_id),FOREIGN KEY(guild_id) REFERENCES guilds(id))`),
-  table(`CREATE TABLE IF NOT EXISTS reports (id ${ref} PRIMARY KEY,event_id ${ref} NOT NULL,claim_id ${ref},reporter_id ${id} NOT NULL,
-    status VARCHAR(32) NOT NULL,channel_id ${id},message_id ${id},created_at BIGINT NOT NULL,reviewer_id ${id},FOREIGN KEY(event_id) REFERENCES events(id))`),
+    created_at BIGINT NOT NULL,reason VARCHAR(500) NOT NULL DEFAULT '',active TINYINT NOT NULL DEFAULT 1,
+    released_by ${id},released_at BIGINT,PRIMARY KEY(guild_id,user_id),FOREIGN KEY(guild_id) REFERENCES guilds(id))`),
 ];
 
 // 기존 저장소에서 사용하는 제한된 upsert 문법만 변환합니다. 값은 전부 준비된 문의 매개변수입니다.

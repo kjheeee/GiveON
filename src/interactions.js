@@ -7,6 +7,7 @@ import { DraftFlow } from './drafts.js';
 import { SetupFlow } from './setup.js';
 import { ProofFlow } from './proof-flow.js';
 import { ModerationFlow } from './moderation.js';
+import { commandAction } from './commands.js';
 
 const requireThat = (condition,message) => { if (!condition) throw new UserError(message); };
 const ROLES = { manager_roles:'관리 역할',condition_roles:'조건에 사용할 역할 목록',blocked_roles:'공통 참여 금지 역할',mention_roles:'시작 알림 역할' };
@@ -63,8 +64,8 @@ export function handler(engine,transport) {
   function adminView(i,a) {
     setup.requireReady(i.guildId,a);
     const settings=store.guild(i.guildId);
-    return respond(i,payload(`**GiveON 관리자**\n공개 채널: ${settings.event_channel?`<#${settings.event_channel}>`:'미설정'}\n이벤트 승인·신고 채널: ${settings.manager_channel?`<#${settings.manager_channel}>`:'미설정'}\n상품 전달 원문과 당첨자 인증 원문은 관리자 화면에 표시되지 않습니다.`,[
-      row(btn('ui:pending:0','승인 대기'),btn('mod:list:0','신고 관리'),btn('ui:channels','설정')),
+    return respond(i,payload(`**GiveON 관리자**\n공개 채널: ${settings.event_channel?`<#${settings.event_channel}>`:'미설정'}\n이벤트 승인 채널: ${settings.manager_channel?`<#${settings.manager_channel}>`:'미설정'}\n상품 전달 원문과 당첨자 인증 원문은 관리자 화면에 표시되지 않습니다.`,[
+      row(btn('ui:pending:0','승인 대기'),btn('host:list:0','주최 제한'),btn('ui:channels','설정')),
       row(btn('tpl:list:0','템플릿'),btn('ui:events:0','전체 이벤트'),btn('ui:issues:0','지급 결과 확인')),back(),
     ]));
   }
@@ -74,7 +75,7 @@ export function handler(engine,transport) {
     if(key==='manager_roles')requireThat(engine.owner(a),'관리 역할은 봇 소유자만 설정할 수 있어요.');
     const s=store.guild(i.guildId);
     return respond(i,payload(`**서버 설정**\n채널과 역할을 여기서 바로 선택하세요. 선택 즉시 저장됩니다.\n현재 역할 설정: **${ROLES[key]}**${key==='condition_roles'?'\n참여 가능·차단 조건에 표시할 후보 목록입니다.':''}`, [
-      channelMenu('event_channel','이벤트 공개 채널',s.event_channel,key),channelMenu('manager_channel','이벤트 승인·신고 채널',s.manager_channel,key),
+      channelMenu('event_channel','이벤트 공개 채널',s.event_channel,key),channelMenu('manager_channel','이벤트 승인 채널',s.manager_channel,key),
       row(new StringSelectMenuBuilder().setCustomId('ui:settingskind').setPlaceholder('설정할 역할 종류').addOptions(Object.entries(ROLES).filter(([name])=>name!=='manager_roles'||engine.owner(a)).map(([name,label])=>({label,value:name,default:name===key})))),
       roleMenu(`ui:roleset:${key}`,ROLES[key],JSON.parse(s[key])),row(btn('ui:admin','관리자로',ButtonStyle.Secondary)),
     ]));
@@ -88,7 +89,7 @@ export function handler(engine,transport) {
     requireThat(channel.permissionsFor(me)?.has([PermissionFlagsBits.ViewChannel,PermissionFlagsBits.SendMessages,PermissionFlagsBits.EmbedLinks,PermissionFlagsBits.AttachFiles,PermissionFlagsBits.ReadMessageHistory]),'봇에게 채널 보기·전송·임베드·첨부·기록 읽기 권한이 필요해요.');
     const s=store.guild(i.guildId),other=key==='event_channel'?'manager_channel':'event_channel';
     requireThat(channel.id!==s[other],'공개 채널과 관리 채널은 서로 달라야 해요.');
-    if(key==='manager_channel')requireThat(channel.id!==store.get('SELECT channel_id FROM panels WHERE guild_id=?',i.guildId)?.channel_id,'승인·신고 채널은 신청 안내 채널과 달라야 해요.');
+    if(key==='manager_channel')requireThat(channel.id!==store.get('SELECT channel_id FROM panels WHERE guild_id=?',i.guildId)?.channel_id,'승인 채널은 신청 안내 채널과 달라야 해요.');
     if (key==='manager_channel') requireThat(!channel.permissionsFor(guild.roles.everyone)?.has(PermissionFlagsBits.ViewChannel),'관리 채널은 @everyone의 채널 보기 권한을 차단해주세요.');
     engine.configure(i.guildId,a,key,channel.id);
     return settingsView(i,a,roleKind);
@@ -106,21 +107,25 @@ export function handler(engine,transport) {
     const chat=i.isChatInputCommand(),button=i.isButton(),modal=i.isModalSubmit(),select=i.isAnySelectMenu?.()||false;
     if (!chat&&!button&&!modal&&!select) return;
     if(proof.matches(i))return proof.handle(i);
-    if(moderation.matches(i)&&!i.inGuild())return moderation.handleDM(i);
+    if((i.customId||'').startsWith('mod:')||(i.customId||'').startsWith('form:report:')) {
+      try{return await i.reply({...payload('이 버튼은 더 이상 사용하지 않습니다. 이벤트·당첨 번호는 서버의 /gon log로 조회해주세요.'),...(i.inGuild()?{flags:MessageFlags.Ephemeral}:{})});}catch{return;}
+    }
     let a;
     try {
       requireThat(i.inGuild(),'이벤트가 열리는 서버에서 사용해주세요.'); engine.guard();
       const parts=(i.customId||'').split(':'),[kind,action,arg,extra]=parts;
-      const mayOpenModal=(chat&&i.commandName==='init')||(button&&((kind==='mod'&&['reportevent','reportclaim'].includes(action))||(kind==='setup'&&action==='open')||(kind==='ui'&&['prizeform','proofsettings'].includes(action))||['claim','ereject'].includes(kind)||(kind==='flow'&&(['details','prize'].includes(action)||(action==='custom'&&arg==='new')))||(kind==='tpl'&&['new','meta','proof'].includes(action))))||(select&&kind==='flow'&&action==='template'&&arg==='new');
+      const command=chat?commandAction(i):null;
+      const mayOpenModal=(chat&&command==='init')||(button&&((kind==='host'&&['new','edit'].includes(action))||(kind==='setup'&&action==='open')||(kind==='ui'&&['prizeform','proofsettings'].includes(action))||['claim','ereject'].includes(kind)||(kind==='flow'&&(['details','prize'].includes(action)||(action==='custom'&&arg==='new')))||(kind==='tpl'&&['new','meta','proof'].includes(action))))||(select&&kind==='flow'&&action==='template'&&arg==='new');
       const defer=()=>i.message?.flags?.has(MessageFlags.Ephemeral)&&typeof i.deferUpdate==='function' ? i.deferUpdate() : i.deferReply({flags:MessageFlags.Ephemeral});
       if(!mayOpenModal) await defer();
       a=modal&&kind==='form'&&action==='proof'?{userId:i.user.id,roles:[],isBot:i.user.bot}:await transport.member(i.guildId,i.user.id);
       requireThat(a,'서버 멤버 정보를 확인하지 못했어요.');
+      if(command==='reqblock')setup.requireReady(i.guildId,a);
       if(moderation.matches(i)){
         if(mayOpenModal)return await moderation.handle(i,a);
         return await respond(i,await moderation.handle(i,a));
       }
-      if(chat&&i.commandName==='init')return await i.showModal(setup.start(i.guildId,a,i.channelId));
+      if(chat&&command==='init')return await i.showModal(setup.start(i.guildId,a,i.channelId));
       if(button&&kind==='setup'&&action==='open')return await i.showModal(setup.modal(i.guildId,a,arg,extra));
       // 모달은 최초 응답으로 열어야 합니다. 데이터 접근 권한은 제출 시에도 다시 확인합니다.
       if (button||select) {
@@ -158,7 +163,11 @@ export function handler(engine,transport) {
       }
       if(mayOpenModal) await defer();
       if (chat) {
-        if(i.commandName==='setting')return adminView(i,a);
+        if(command==='settings')return adminView(i,a);
+        if(command==='alert:on'||command==='alert:off') {
+          engine.setNotices(a,command==='alert:on');
+          return respond(i,payload(`내 이벤트 생성·진행 승인·당첨자 수령 알림 DM을 **${command==='alert:on'?'켰어요':'껐어요'}**.\n계정별로 모든 서버에 적용됩니다.\n상품 전달과 인증·보완 안내는 별도로 수신합니다.`,[back()]));
+        }
         throw new UserError('안내 메시지의 버튼을 사용해주세요.');
       }
       if(kind==='setup') {

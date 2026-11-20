@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { ChannelType } from 'discord.js';
-import { fixture,actor,content,GUILD,OTHER_GUILD,HOST,MANAGER,interaction } from './helpers.js';
+import { fixture,actor,content,GUILD,OTHER_GUILD,HOST,MANAGER,OWNER,interaction } from './helpers.js';
 import { ModerationFlow } from '../src/moderation.js';
 import { handler } from '../src/interactions.js';
 
@@ -29,24 +29,46 @@ test('식별자 검색은 관련 당사자·관리자만 가능하고 서버 경
   const view=new ModerationFlow(f.engine,f.transport).lookup(GUILD,MANAGER,c.id);assert.doesNotMatch(JSON.stringify(view),/상품-.*-1|prize:/);
 });
 
-test('신고 증거는 관리자에게만 보내고 DB에는 원문을 저장하지 않으며 주최 제한을 적용한다',async t=>{
+test('신고 접수와 신고 버튼을 제공하지 않으며 이전 버튼·모달은 내용을 저장하지 않는다',async t=>{
   const f=fixture(t),user=actor(4),eid=await f.event({participants:[user]});f.advance(60001);await f.engine.tick();const [c]=f.claims(eid);
-  const sends=[];f.transport.sendReport=async(channel,report,body)=>{sends.push({channel,report,body});return {id:'100000000000098'};};
-  const handle=handler(f.engine,f.transport),submit=interaction(user,`form:report:claim:${c.id}`,{text:'PRIVATE-REPORT'},'modal');await handle(submit);
-  assert.equal(sends.length,1);assert.equal(sends[0].channel,f.store.guild(GUILD).manager_channel);assert.equal(sends[0].body.text,'PRIVATE-REPORT');
-  const report=f.store.get('SELECT * FROM reports WHERE event_id=?',eid);assert.equal(report.status,'OPEN');assert.doesNotMatch(JSON.stringify(report),/PRIVATE-REPORT/);
-  const duplicate=interaction(user,`form:report:claim:${c.id}`,{text:'dupe'},'modal');await handle(duplicate);assert.equal(sends.length,1);
-  const forged=interaction(HOST,`form:report:claim:${c.id}`,{text:'forged'},'modal');await handle(forged);assert.equal(sends.length,1);
-  const restrict=interaction(MANAGER,`mod:restrictok:${report.id}:on`);await handle(restrict);
-  assert.throws(()=>f.engine.create(GUILD,HOST,{title:'x'}),/주최가 제한/);
-  assert.throws(()=>new ModerationFlow(f.engine,f.transport).view(GUILD,user,report.id),/관리자만/);
-  assert.throws(()=>new ModerationFlow(f.engine,f.transport).view(OTHER_GUILD,MANAGER,report.id),/관리자만|신고를/);
-  f.engine.restrictHost(GUILD,MANAGER,HOST.userId,false);assert.doesNotThrow(()=>f.engine.requireHostAllowed(GUILD,HOST.userId));
+  const handle=handler(f.engine,f.transport),flow=new ModerationFlow(f.engine,f.transport);
+  assert.doesNotMatch(JSON.stringify(flow.lookup(GUILD,user,c.id)),/mod:report|신고/);
+  const retired=interaction(user,`form:report:claim:${c.id}`,{text:'DO-NOT-STORE'},'modal');await handle(retired);
+  assert.match(retired.replies[0].content,/더 이상 사용하지/);assert.doesNotMatch(JSON.stringify(retired.replies),/DO-NOT-STORE/);
+  const dm=Object.assign(interaction(user,`mod:reportclaim:${c.id}`),{guildId:null,inGuild:()=>false,channel:{type:ChannelType.DM}});await handle(dm);assert.equal(dm.modal,undefined);assert.match(dm.replies[0].content,/gon log/);
+  assert.equal(f.transport.sendReport,undefined);assert.equal(f.store.columns('reports').length,0);
 });
 
-test('수령 DM의 신고 버튼도 당첨자만 신고 입력창을 열 수 있다',async t=>{
-  const f=fixture(t),user=actor(4),eid=await f.event({participants:[user]});f.advance(60001);await f.engine.tick();const [c]=f.claims(eid);
-  const handle=handler(f.engine,f.transport),dm=a=>Object.assign(interaction(a,`mod:reportclaim:${c.id}`),{guildId:null,inGuild:()=>false,channel:{type:ChannelType.DM}});
-  const open=dm(user);await handle(open);assert.equal(open.modal.toJSON().custom_id,`form:report:claim:${c.id}`);
-  const denied=dm(HOST);await handle(denied);assert.equal(denied.modal,undefined);
+test('관리자는 사용자·필수 사유로 주최 제한을 설정하고 생성·초안 제출·승인을 막는다',async t=>{
+  const f=fixture(t),draft=await f.event({start:false}),pending=await f.event({start:false});f.engine.submit(GUILD,HOST,pending);
+  const handle=handler(f.engine,f.transport),open=interaction(MANAGER,'host:new');await handle(open);
+  assert.equal(open.modal.toJSON().custom_id,'form:hostblock:new');assert.equal(open.modal.toJSON().components.length,2);
+  const submit=interaction(MANAGER,'form:hostblock:new',{user:`<@${HOST.userId}>`,reason:'허위 상품 안내 · 관리자 확인'},'modal');await handle(submit);
+  const block=f.store.get('SELECT * FROM host_blocks WHERE guild_id=? AND user_id=?',GUILD,HOST.userId);
+  assert.equal(block.reason,'허위 상품 안내 · 관리자 확인');assert.equal(block.actor_id,MANAGER.userId);assert.equal(block.active,1);
+  assert.match(submit.replies[0].content,/허위 상품 안내/);assert.match(submit.replies[0].content,new RegExp(MANAGER.userId));
+  assert.throws(()=>f.engine.create(GUILD,HOST,{title:'x'}),/주최가 제한/);assert.throws(()=>f.engine.submit(GUILD,HOST,draft),/주최가 제한/);assert.throws(()=>f.engine.approveEvent(GUILD,MANAGER,pending),/주최가 제한/);
+  const list=interaction(MANAGER,'host:list:0');await handle(list);assert.match(JSON.stringify(list.replies),/허위 상품 안내/);
+});
+
+test('주최 제한 사유 수정·해제 시 최근 사유·설정 관리자와 해제 기록을 보존한다',async t=>{
+  const f=fixture(t);f.engine.restrictHost(GUILD,MANAGER,HOST.userId,true,'최초 사유');f.advance(1000);
+  f.engine.restrictHost(GUILD,OWNER,HOST.userId,true,'수정 사유');f.advance(1000);f.engine.restrictHost(GUILD,MANAGER,HOST.userId,false);
+  const block=f.store.get('SELECT * FROM host_blocks WHERE guild_id=? AND user_id=?',GUILD,HOST.userId);
+  assert.equal(block.active,0);assert.equal(block.reason,'수정 사유');assert.equal(block.actor_id,OWNER.userId);assert.equal(block.released_by,MANAGER.userId);assert.equal(block.released_at,f.now());
+  assert.doesNotThrow(()=>f.engine.requireHostAllowed(GUILD,HOST.userId));
+  const flow=new ModerationFlow(f.engine,f.transport),view=flow.view(GUILD,MANAGER,HOST.userId);assert.match(view.content,/최근 제한 사유: 수정 사유/);assert.match(view.content,/해제 관리자/);
+  f.engine.restrictHost(GUILD,MANAGER,HOST.userId,true,'재제한');assert.equal(f.store.get('SELECT released_by FROM host_blocks WHERE user_id=?',HOST.userId).released_by,null);
+});
+
+test('제한·사유 열람은 관리자만 가능하고 빈 사유·긴 사유·변조된 대상은 저장하지 않는다',async t=>{
+  const f=fixture(t),handle=handler(f.engine,f.transport),flow=new ModerationFlow(f.engine,f.transport);
+  assert.throws(()=>f.engine.restrictHost(GUILD,HOST,actor(9).userId,true,'사유'),/관리자만/);
+  assert.throws(()=>flow.view(GUILD,HOST,actor(9).userId),/관리자만/);
+  for(const reason of ['', '  ', 'a'.repeat(501)])assert.throws(()=>f.engine.restrictHost(GUILD,MANAGER,HOST.userId,true,reason),/사유/);
+  assert.throws(()=>f.engine.restrictHost(GUILD,MANAGER,'invalid',true,'사유'),/사용자/);
+  const forged=interaction(MANAGER,`form:hostblock:${HOST.userId}`,{user:actor(9).userId,reason:'대상 바꾸기'},'modal');await handle(forged);assert.match(forged.replies[0].content,/선택한 사용자는/);
+  assert.equal(f.store.get('SELECT count(*) n FROM host_blocks').n,0);
+  f.engine.restrictHost(GUILD,MANAGER,HOST.userId,true,'이 서버 사유');f.engine.configure(OTHER_GUILD,OWNER,'manager_roles',[]);
+  assert.doesNotThrow(()=>f.engine.requireHostAllowed(OTHER_GUILD,HOST.userId));assert.throws(()=>flow.view(OTHER_GUILD,MANAGER,HOST.userId),/관리자만/);
 });

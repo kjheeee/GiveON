@@ -4,7 +4,7 @@ import { UserError } from './engine.js';
 import { btn, row, payload } from './ui.js';
 
 const ROLES = { manager_roles:'관리 역할 (선택)',condition_roles:'참여·차단 조건의 후보 역할 (선택)',blocked_roles:'공통 참여 금지 역할 (선택)',mention_roles:'이벤트 시작 알림 역할 (선택)' };
-const CHANNELS = { panel_channel:'신청 안내를 게시할 채널',event_channel:'승인된 이벤트를 공개할 채널',manager_channel:'이벤트 승인·신고용 비공개 채널' };
+const CHANNELS = { panel_channel:'신청 안내를 게시할 채널',event_channel:'승인된 이벤트를 공개할 채널',manager_channel:'이벤트 승인용 비공개 채널' };
 const check = (ok,message) => { if (!ok) throw new UserError(message); };
 const summary = ids => ids.length ? ids.slice(0,5).map(id=>`<@&${id}>`).join(' ')+(ids.length>5?` 외 ${ids.length-5}개`:'') : '없음';
 
@@ -14,7 +14,7 @@ export class SetupFlow {
   requireReady(gid,actor) {
     this.engine.requireManager(gid,actor);
     const settings=this.store.guild(gid),panel=this.store.get('SELECT * FROM panels WHERE guild_id=?',gid);
-    check(panel?.state==='READY'&&panel.message_id&&settings.event_channel&&settings.manager_channel,'먼저 /init으로 초기설정을 완료하고 신청 안내를 게시해주세요.');
+    check(panel?.state==='READY'&&panel.message_id&&settings.event_channel&&settings.manager_channel,'먼저 /gon init으로 초기설정을 완료하고 신청 안내를 게시해주세요.');
   }
   start(gid,actor,channelId) {
     this.engine.requireManager(gid,actor);
@@ -31,7 +31,7 @@ export class SetupFlow {
     this.engine.requireManager(gid,actor);
     check(!this.publishing.has(gid),'설정 완료와 안내 게시를 처리 중이에요. 잠시 기다려주세요.');
     const session=this.store.get('SELECT * FROM setup_sessions WHERE guild_id=? AND user_id=? AND token=?',gid,actor.userId,token);
-    check(session,'이 초기설정 화면은 만료됐어요. /init을 다시 실행해주세요.');
+    check(session,'이 초기설정 화면은 만료됐어요. /gon init을 다시 실행해주세요.');
     return {...session,data:JSON.parse(session.data)};
   }
   modal(gid,actor,token,step) {
@@ -105,7 +105,7 @@ export class SetupFlow {
   }
   cancel(gid,actor,token) {
     this.session(gid,actor,token);this.store.run('DELETE FROM setup_sessions WHERE guild_id=? AND user_id=? AND token=?',gid,actor.userId,token);
-    return payload('초기설정을 닫았어요. 다시 시작하려면 /init을 실행해주세요.');
+    return payload('초기설정을 닫았어요. 다시 시작하려면 /gon init을 실행해주세요.');
   }
   async finish(gid,actor,token,guild) {
     check(guild.id===gid,'이 서버의 초기설정에서 진행해주세요.');
@@ -115,7 +115,7 @@ export class SetupFlow {
     try {
       await this.validateChannels(guild,s.data);
       const currentActor=await this.transport.member(gid,actor.userId);check(currentActor,'서버 멤버 정보를 확인하지 못했어요.');this.engine.requireManager(gid,currentActor);
-      check(s.baseline===this.configuration(gid),'다른 관리자가 설정을 변경했어요. /init을 다시 실행해 최신 설정을 확인해주세요.');
+      check(s.baseline===this.configuration(gid),'다른 관리자가 설정을 변경했어요. /gon init을 다시 실행해 최신 설정을 확인해주세요.');
       this.store.tx(()=>{
         for(const key of ['event_channel','manager_channel',...Object.keys(ROLES)]) {
           if(key==='manager_roles'&&!this.engine.owner(currentActor))continue;
@@ -130,7 +130,7 @@ export class SetupFlow {
         return this.view(gid,currentActor,token,'설정은 저장했지만 안내 게시를 확인하지 못했어요. 채널 권한을 확인한 뒤 **완료·게시**를 다시 눌러주세요. 기존 안내를 먼저 확인하므로 중복 게시를 방지합니다.');
       }
       this.store.run('DELETE FROM setup_sessions WHERE guild_id=? AND user_id=? AND token=?',gid,actor.userId,token);
-      return payload(`초기설정을 완료하고 신청 안내를 게시했어요.\nhttps://discord.com/channels/${gid}/${posted.channelId}/${posted.id}\n신청은 안내 메시지의 버튼으로, 설정·관리는 /setting으로 진행하세요.`);
+      return payload(`초기설정을 완료하고 신청 안내를 게시했어요.\nhttps://discord.com/channels/${gid}/${posted.channelId}/${posted.id}\n신청은 안내 메시지의 버튼으로, 설정·관리는 /gon settings으로 진행하세요.`);
     } finally { this.publishing.delete(gid); }
   }
 }

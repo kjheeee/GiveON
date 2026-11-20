@@ -82,16 +82,23 @@ export class Store extends StoreBase {
         PRIMARY KEY(guild_id,user_id)
       );
       CREATE TABLE IF NOT EXISTS direct_events (event_id TEXT PRIMARY KEY REFERENCES events(id));
+      CREATE TABLE IF NOT EXISTS notification_prefs (
+        user_id TEXT PRIMARY KEY, enabled INTEGER NOT NULL DEFAULT 1, updated_at INTEGER NOT NULL
+      );
       CREATE TABLE IF NOT EXISTS host_blocks (
         guild_id TEXT NOT NULL REFERENCES guilds(id), user_id TEXT NOT NULL, actor_id TEXT NOT NULL,
-        created_at INTEGER NOT NULL, PRIMARY KEY(guild_id,user_id)
-      );
-      CREATE TABLE IF NOT EXISTS reports (
-        id TEXT PRIMARY KEY, event_id TEXT NOT NULL REFERENCES events(id), claim_id TEXT, reporter_id TEXT NOT NULL,
-        status TEXT NOT NULL, channel_id TEXT, message_id TEXT, created_at INTEGER NOT NULL, reviewer_id TEXT
+        created_at INTEGER NOT NULL, reason TEXT NOT NULL DEFAULT '', active INTEGER NOT NULL DEFAULT 1,
+        released_by TEXT, released_at INTEGER, PRIMARY KEY(guild_id,user_id)
       );
       PRAGMA user_version=1;
     `);
+    this.upgradeHostBlocks();
+  }
+  upgradeHostBlocks() {
+    const columns=new Set(this.columns('host_blocks'));
+    for(const [name,definition] of Object.entries({reason:"TEXT NOT NULL DEFAULT ''",active:'INTEGER NOT NULL DEFAULT 1',released_by:'TEXT',released_at:'INTEGER'})) {
+      if(!columns.has(name))this.db.exec(`ALTER TABLE host_blocks ADD COLUMN ${name} ${definition}`);
+    }
   }
   get(sql, ...args) { return this.db.prepare(sql).get(...args); }
   all(sql, ...args) { return this.db.prepare(sql).all(...args); }

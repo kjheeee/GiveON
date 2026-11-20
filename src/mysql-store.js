@@ -29,7 +29,7 @@ export class MySQLStore extends StoreBase {
   run(sql,...args){return this.request('run',sql,args);}
   columns(table){
     if(!/^[a-z_]+$/.test(table))throw new Error('잘못된 테이블 이름');
-    return this.all(`SHOW COLUMNS FROM ${table}`).map(column=>column.Field);
+    return this.all('SELECT COLUMN_NAME name FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME=? ORDER BY ORDINAL_POSITION',table).map(column=>column.name);
   }
   tx(fn){
     this.request('begin');
