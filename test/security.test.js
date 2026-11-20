@@ -42,9 +42,9 @@ test('이미지는 Discord HTTPS 첨부만 허용하고 MIME·확장자가 아�
   await assert.rejects(readContent('', [{ ...attachment, size: 9 * 1024 * 1024 }]), /8MiB/);
 });
 
-test('관리자용 init·setting만 등록하고 일반 이용 명령은 제공하지 않는다', () => {
+test('init·setting과 식별자 검색 lookup을 등록하며 일반 이벤트 진행은 버튼으로 유지한다', () => {
   const definitions = commands.map(c => c.toJSON());
-  assert.deepEqual(definitions.map(c=>c.name),['init','setting']);
+  assert.deepEqual(definitions.map(c=>c.name),['init','setting','lookup']);
   assert.equal(new Set(definitions.map(c => c.name)).size, definitions.length);
   for (const definition of definitions) assert.deepEqual(definition.contexts, [0]);
 });

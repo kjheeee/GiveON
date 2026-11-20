@@ -4,7 +4,7 @@ import { UserError } from './engine.js';
 import { btn, row, payload } from './ui.js';
 
 const ROLES = { manager_roles:'관리 역할 (선택)',condition_roles:'참여·차단 조건의 후보 역할 (선택)',blocked_roles:'공통 참여 금지 역할 (선택)',mention_roles:'이벤트 시작 알림 역할 (선택)' };
-const CHANNELS = { panel_channel:'신청 안내를 게시할 채널',event_channel:'승인된 이벤트를 공개할 채널',manager_channel:'승인·인증 검수용 비공개 채널' };
+const CHANNELS = { panel_channel:'신청 안내를 게시할 채널',event_channel:'승인된 이벤트를 공개할 채널',manager_channel:'이벤트 승인·신고용 비공개 채널' };
 const check = (ok,message) => { if (!ok) throw new UserError(message); };
 const summary = ids => ids.length ? ids.slice(0,5).map(id=>`<@&${id}>`).join(' ')+(ids.length>5?` 외 ${ids.length-5}개`:'') : '없음';
 

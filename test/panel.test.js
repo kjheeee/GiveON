@@ -135,12 +135,12 @@ test('상품 등록 입력창은 다음 빈 자리를 기본값으로 제시하�
 test('인증 수령 버튼은 입력창을 열고 타이머를 한 번만 시작하며 제출 후 비공개 검수로 전환한다',async t=>{
   const f=setup(t),user=actor(4),eid=await f.event({proof:true,participants:[user]});f.advance(60001);await f.engine.tick();
   const [claim]=f.claims(eid),open=request(user,`claim:${claim.id}`);await f.handle(open);
-  assert.equal(open.modal.toJSON().custom_id,`form:proof:${claim.id}`);
+  assert.equal(open.modal.toJSON().custom_id,`form:proof:${claim.id}:0`);
   const deadline=f.store.claim(claim.id).submit_deadline;f.advance(10000);
   const again=request(user,`claim:${claim.id}`);await f.handle(again);assert.equal(f.store.claim(claim.id).submit_deadline,deadline);
   const submit=request(user,`form:proof:${claim.id}`,{text:'PRIVATE-PROOF'},'modal');await f.handle(submit);
   assert.equal(f.store.claim(claim.id).status,'REVIEW');assert.equal(JSON.stringify(submit.replies).includes('PRIVATE-PROOF'),false);
-  const approve=request(MANAGER,`papprove:${claim.id}:1`,{},'button',true);await f.handle(approve);
+  const approve=request(HOST,`papprove:${claim.id}:1`,{},'button',true);await f.handle(approve);
   assert.equal(approve.updated,true);assert.deepEqual(approve.replies[0].attachments,[]);assert.equal(f.store.claim(claim.id).status,'DELIVERED');assert.equal(f.store.claim(claim.id).proof,null);
 });
 

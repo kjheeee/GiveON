@@ -36,7 +36,7 @@ export function contentModal(id,title,slot=null,instructions='') {
   if(instructions) modal.addTextDisplayComponents(new TextDisplayBuilder().setContent(instructions));
   if (slot !== null) modal.addLabelComponents(input('slot','상품 자리 번호',3,false,true,String(slot)));
   return modal.addLabelComponents(
-    input('text',id.startsWith('form:proof:')?'인증 메시지 (사진만 제출해도 됩니다)':'전달할 메시지 (이미지만 첨부해도 됩니다)',1800,true,false),
+    input('text',id.startsWith('form:proof:')?'인증 메시지 (사진만 제출해도 됩니다)':id.startsWith('form:report:')?'신고 내용 (개인정보·상품 코드는 가려주세요)':'전달할 메시지 (이미지만 첨부해도 됩니다)',1800,true,false),
     new LabelBuilder().setLabel('이미지 첨부').setDescription('최대 2장, 합계 8MiB. PNG·JPG·GIF·WebP')
       .setFileUploadComponent(new FileUploadBuilder().setCustomId('images').setMinValues(0).setMaxValues(2).setRequired(false).setFileTypes('.png','.jpg','.jpeg','.gif','.webp')),
   );
@@ -87,8 +87,7 @@ export function eventView(engine,transport,guildId,actor,eventId,page=0) {
   if (event.status==='DRAFT' && (own||manager)) components.push(row(btn(`ui:conditions:${eventId}`,'참여 역할 조건')));
   if (manager && event.status==='PENDING') components.push(row(btn(`eapprove:${eventId}`,'승인·시작',ButtonStyle.Success),btn(`ereject:${eventId}`,'신청 거절',ButtonStyle.Danger)));
   const management=[];
-  if (manager) management.push(btn(`ui:eventclaims:${eventId}:0`,'당첨·검수 관리'));
-  if (own && ['COMPLETED','CANCELLED','REJECTED'].includes(event.status)) management.push(btn(`ui:recover:${eventId}`,'미지급 상품 회수'));
+  if (manager) management.push(btn(`ui:eventclaims:${eventId}:0`,'당첨 관리'));
   if ((own||manager) && !['COMPLETED','CANCELLED'].includes(event.status)) management.push(btn(`ui:cancel:${eventId}`,'이벤트 취소',ButtonStyle.Danger));
   if (management.length) components.push(row(...management));
   const embed=transport.eventEmbed(event);
@@ -101,12 +100,13 @@ export function eventView(engine,transport,guildId,actor,eventId,page=0) {
     if(people.page+1<people.pages)nav.push(btn(`ui:event:${eventId}:${people.page+1}`,'다음',ButtonStyle.Secondary));
     nav.push(btn(`ui:event:${eventId}:${people.page}`,'새로고침',ButtonStyle.Secondary));components.push(row(...nav));
   }
+  if(event.public_message_id)components.push(row(btn(`mod:reportevent:${eventId}`,'이벤트 신고',ButtonStyle.Danger)));
   components.push(back());
   return payload(`이벤트 번호: ${eventId}${own||manager ? `\n보관 중인 상품: ${count}건` : ''}${event.rejection_reason ? `\n거절 사유: ${event.rejection_reason}` : ''}`,components,[embed]);
 }
 export function claimView(engine,guildId,actor,claimId,managerView=false) {
   const {claim,event}=engine.claim(claimId,guildId);
-  let description=`**${event.title}**\n당첨 번호: ${claim.id}\n자리: ${claim.slot}\n상태: **${statuses[claim.status]}**`;
+  let description=`**${event.title}**\n당첨 번호: ${claim.id}\n자리: ${claim.slot}\n상태: **${claim.status==='DELIVERED'&&engine.direct(event.id)?'주최자 연락 안내 완료':statuses[claim.status]}**`;
   const actions=[];
   if (!managerView) {
     if (claim.status==='CLAIMABLE') { description+=`\n수령 기한: ${time(claim.claim_deadline)}`; actions.push(btn(`claim:${claimId}`,'수령',ButtonStyle.Success)); }
@@ -119,10 +119,12 @@ export function claimView(engine,guildId,actor,claimId,managerView=false) {
     if (claim.status==='DELIVERY_UNKNOWN') description+='\n관리자에게 지급 확인을 요청해주세요.';
   } else {
     description+=`\n당첨자: <@${claim.user_id}>`;
-    if (claim.status==='REVIEW') actions.push(btn(`pview:${claimId}`,'인증 검수'));
+    if (claim.status==='REVIEW'&&event.owner_id===actor.userId) actions.push(btn(`pview:${claimId}`,'인증 검수'));
     if (claim.status==='DELIVERY_UNKNOWN') actions.push(btn(`ui:reconcile:${claimId}`,'기존 지급 확인'));
     if (['ANNOUNCING','CLAIMABLE','SUBMITTING','REVIEW'].includes(claim.status)) actions.push(btn(`ui:reroll:${claimId}`,'이 자리 리롤',ButtonStyle.Danger));
   }
-  const components=actions.length ? [row(...actions)] : []; components.push(back());
+  const components=actions.length ? [row(...actions)] : [];
+  if(!managerView)components.push(row(btn(`mod:reportclaim:${claimId}`,'상품·전달 내용 신고',ButtonStyle.Danger)));
+  components.push(back());
   return payload(description,components);
 }

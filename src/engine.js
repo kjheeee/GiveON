@@ -122,6 +122,7 @@ export class Engine {
   }
   create(guildId, actor, options) {
     this.guard();
+    this.requireHostAllowed(guildId,actor.userId);
     const template=options.templateId?this.templateForUse(options.templateId,guildId):null;
     const { title, description, durationMinutes, claimMinutes, winners, proofRequired = false, proofInstructions = '' } = template?{...options,description:template.description,proofRequired:Boolean(template.proof_required),proofInstructions:template.proof_instructions}:options;
     if (!title?.trim() || title.length > 100 || !description?.trim() || description.length > 1800) fail('상품명은 100자, 설명은 1,800자 이내로 입력해주세요.');
@@ -163,11 +164,13 @@ export class Engine {
     const description=this.store.get('SELECT template_id FROM draft_steps WHERE event_id=?',eventId)?.template_id?event.description:options.description;
     if(!title?.trim()||title.length>100||!description?.trim()||description.length>1800) fail('상품명은 100자, 설명은 1,800자 이내로 입력해주세요.');
     if(!Number.isInteger(durationMinutes)||durationMinutes<1||durationMinutes>43200||!Number.isInteger(claimMinutes)||claimMinutes<1||claimMinutes>10080||!Number.isInteger(winners)||winners<1||winners>100) fail('시간과 당첨 인원을 올바르게 입력해주세요.');
-    if(this.store.get('SELECT slot FROM prizes WHERE event_id=? AND slot>? AND secret IS NOT NULL LIMIT 1',eventId,winners)) fail('줄어드는 자리에 등록된 상품이 있어 당첨 인원을 줄일 수 없어요. 등록한 상품 내용은 유지됩니다.');
+    if(!this.direct(eventId)&&this.store.get('SELECT slot FROM prizes WHERE event_id=? AND slot>? AND secret IS NOT NULL LIMIT 1',eventId,winners)) fail('줄어드는 자리에 등록된 상품이 있어 당첨 인원을 줄일 수 없어요. 등록한 상품 내용은 유지됩니다.');
     this.store.tx(()=>{
       this.store.run('UPDATE events SET title=?,description=?,duration_ms=?,claim_ms=?,winner_count=? WHERE id=?',title.trim(),description.trim(),durationMinutes*60000,claimMinutes*60000,winners,eventId);
       for(let slot=1;slot<=winners;slot++) this.store.run('INSERT OR IGNORE INTO prizes(event_id,slot) VALUES (?,?)',eventId,slot);
+      if(this.direct(eventId))this.store.run('UPDATE prizes SET secret=NULL WHERE event_id=? AND slot>?',eventId,winners);
       this.store.run('DELETE FROM prizes WHERE event_id=? AND slot>? AND secret IS NULL',eventId,winners);
+      if(this.direct(eventId))for(let slot=1;slot<=winners;slot++)this.store.run('UPDATE prizes SET secret=? WHERE event_id=? AND slot=?',this.vault.seal(this.contactContent(event),`prize:${eventId}:${slot}`),eventId,slot);
     });
   }
   setPrize(guildId, actor, eventId, slot, content) {
@@ -175,6 +178,7 @@ export class Engine {
     const event = this.event(eventId, guildId);
     if (event.owner_id !== actor.userId) fail('상품 내용은 주최자만 등록할 수 있어요.');
     if (event.status !== 'DRAFT') fail('신청 전 초안에서만 상품을 등록할 수 있어요.');
+    if(this.direct(eventId))fail('직접 전달 방식은 개별 상품 대신 주최자 연락 안내를 전달해요.');
     if (!Number.isInteger(slot) || slot < 1 || slot > event.winner_count) fail('당첨 인원 안의 자리 번호를 입력해주세요.');
     this.validateContent(content);
     this.store.run('UPDATE prizes SET secret=? WHERE event_id=? AND slot=?', this.vault.seal(content, `prize:${eventId}:${slot}`), eventId, slot);
@@ -198,6 +202,7 @@ export class Engine {
     this.guard();
     const event = this.event(eventId, guildId);
     if (event.owner_id !== actor.userId || event.status !== 'DRAFT') fail('본인의 초안만 신청할 수 있어요.');
+    this.requireHostAllowed(guildId,event.owner_id);
     const settings = this.store.guild(guildId);
     if (!settings.manager_channel || !settings.event_channel) fail('관리자가 먼저 관리 채널과 이벤트 채널을 설정해야 해요.');
     this.validateConditionPair(guildId,list(event.allow_roles),list(event.deny_roles));
@@ -236,6 +241,7 @@ export class Engine {
     this.requireManager(guildId, actor);
     const event = this.event(eventId, guildId);
     if (event.status !== 'PENDING') fail('승인 대기 중인 이벤트가 아니에요.');
+    this.requireHostAllowed(guildId,event.owner_id);
     this.validateConditionPair(guildId,list(event.allow_roles),list(event.deny_roles));
     this.validateEventTemplate(event);
     this.store.tx(() => {
@@ -252,6 +258,7 @@ export class Engine {
     if (reason.length > 500) fail('사유는 500자 이내로 입력해주세요.');
     this.store.tx(() => {
       this.store.run("UPDATE events SET status='REJECTED',rejection_reason=? WHERE id=?", reason, eventId);
+      this.store.run('UPDATE prizes SET secret=NULL WHERE event_id=?',eventId);
       this.store.queue('rejected', eventId, this.now());
       this.store.audit(eventId, null, 'REJECTED', actor.userId, this.now());
     });
@@ -305,8 +312,7 @@ export class Engine {
           const slot = vacant[i].slot;
           const winner = winners[i];
           if (!winner) {
-            // 미지급 상품은 주최자가 회수할 수 있도록 암호화한 채 유지합니다.
-            this.store.run("UPDATE prizes SET status='EXHAUSTED' WHERE event_id=? AND slot=?", eventId, slot);
+            this.store.run("UPDATE prizes SET status='EXHAUSTED',secret=NULL WHERE event_id=? AND slot=?", eventId, slot);
             continue;
           }
           const claimId = id();
@@ -360,31 +366,35 @@ export class Engine {
     this.store.tx(() => {
       this.store.run("UPDATE claims SET status='REVIEW',proof=?,feedback=NULL,proof_version=?,submit_deadline=NULL,upload_until=NULL,upload_token=NULL WHERE id=?",
         this.vault.seal(content, `proof:${claimId}:${version}`), version, claimId);
-      this.store.queue('proof', claimId, this.now(), `:${version}`);
+      this.store.queue('proof', claimId, this.now(), `:host:${version}`);
       this.store.audit(event.id, claimId, 'PROOF_SUBMITTED', actor.userId, this.now());
     });
   }
+  proofReviewer(guildId,actor,claimId) {
+    const value=this.claim(claimId,guildId);
+    if(value.event.owner_id!==actor.userId)fail('이 이벤트의 주최자만 인증을 검수할 수 있어요.');
+    return value;
+  }
   viewProof(guildId, actor, claimId) {
-    this.requireManager(guildId, actor);
-    const { claim } = this.claim(claimId, guildId);
+    this.guard();
+    const { claim } = this.proofReviewer(guildId,actor,claimId);
     if (claim.status !== 'REVIEW' || !claim.proof) fail('검수 대기 중인 인증 자료가 없어요.');
     return { content: this.vault.open(claim.proof, `proof:${claimId}:${claim.proof_version}`), version: claim.proof_version };
   }
   async review(guildId, actor, claimId, version, action, reason = '') {
     this.guard();
-    this.requireManager(guildId, actor);
-    const { claim, event } = this.claim(claimId, guildId);
+    const { claim, event } = this.proofReviewer(guildId,actor,claimId);
     if (claim.status !== 'REVIEW' || claim.proof_version !== version) fail('이미 처리되었거나 새 인증 자료가 제출되었어요. 다시 조회해주세요.');
     if (!['approve', 'rework', 'deny'].includes(action)) fail('지원하지 않는 검수 작업이에요.');
     if (reason.length > 500) fail('사유는 500자 이내로 입력해주세요.');
     this.store.tx(() => {
       if (action === 'approve') {
-        this.store.run("UPDATE claims SET status='READY',reviewer_id=? WHERE id=?", actor.userId, claimId);
+        this.store.run("UPDATE claims SET status='READY',proof=NULL,feedback=NULL,reviewer_id=? WHERE id=?", actor.userId, claimId);
       } else if (action === 'rework') {
         this.store.run("UPDATE claims SET status='SUBMITTING',proof=NULL,feedback=?,submit_deadline=?,reviewer_id=? WHERE id=?",
           this.vault.seal({ text: reason || '인증 내용을 보완해 다시 제출해주세요.' }, `feedback:${claimId}`),
           this.now() + PROOF_MS, actor.userId, claimId);
-        this.store.queue('rework', claimId, this.now(), `:${version}`);
+        this.store.queue('rework', claimId, this.now(), `:dm:${version}`);
       } else {
         this.store.run("UPDATE claims SET status='DENIED',proof=NULL,feedback=NULL,reviewer_id=? WHERE id=?", actor.userId, claimId);
         this.store.run("UPDATE prizes SET status='AVAILABLE' WHERE event_id=? AND slot=?", event.id, claim.slot);
@@ -414,7 +424,7 @@ export class Engine {
       channelId = await this.transport.prepareDM(claim.user_id);
       this.guard();
       const prize = this.store.get('SELECT secret FROM prizes WHERE event_id=? AND slot=?', claim.event_id, claim.slot);
-      content = this.vault.open(prize.secret, `prize:${claim.event_id}:${claim.slot}`);
+      content = this.direct(event.id)?this.contactContent(event):this.vault.open(prize.secret, `prize:${claim.event_id}:${claim.slot}`);
     } catch {
       this.store.run("UPDATE claims SET status='DELIVERY_FAILED',last_error='PREPARE_FAILED' WHERE id=? AND status='PREPARING'", claimId);
       this.store.queue('deliveryIssue', claimId, this.now(), `:prepare:${this.now()}`);
@@ -481,25 +491,48 @@ export class Engine {
     this.store.tx(() => {
       this.store.run("UPDATE events SET status='CANCELLED' WHERE id=?", eventId);
       this.store.run(`UPDATE claims SET status='DENIED',proof=NULL,feedback=NULL,upload_until=NULL,upload_token=NULL WHERE event_id=? AND ${activeClaim}`, eventId);
-      this.store.run("UPDATE prizes SET status='EXHAUSTED' WHERE event_id=? AND status IN ('ASSIGNED','AVAILABLE')", eventId);
+      this.store.run("UPDATE prizes SET status='EXHAUSTED',secret=NULL WHERE event_id=? AND status IN ('ASSIGNED','AVAILABLE')", eventId);
       this.store.audit(eventId, null, 'CANCELLED', actor.userId, this.now());
       this.store.queue('closed', eventId, this.now());
     });
     this.dirty.add(eventId);
   }
-  unusedPrize(guildId, actor, eventId, slot, erase = false) {
-    this.guard();
-    const event = this.event(eventId, guildId);
-    if (event.owner_id !== actor.userId) fail('미지급 상품은 주최자 본인만 회수할 수 있어요.');
-    if (!['REJECTED', 'CANCELLED', 'COMPLETED'].includes(event.status)) fail('이벤트가 종료된 후 미지급 상품을 회수할 수 있어요.');
-    const prize = this.store.get('SELECT * FROM prizes WHERE event_id=? AND slot=?', eventId, slot);
-    if (!prize?.secret || ['DELIVERED', 'RETURNED'].includes(prize.status)) fail('회수할 상품이 없어요.');
-    if (erase) {
-      this.store.run("UPDATE prizes SET secret=NULL,status='RETURNED' WHERE event_id=? AND slot=?", eventId, slot);
-      this.store.audit(eventId, null, 'UNUSED_ERASED', actor.userId, this.now());
-      return;
+  direct(eventId) {return Boolean(this.store.get('SELECT event_id FROM direct_events WHERE event_id=?',eventId));}
+  contactContent(event) {return {text:`실물·직접 전달 상품입니다.\n주최자 <@${event.owner_id}>에게 개인 DM으로 연락해주세요.\n이름·주소·연락처는 봇에 제출하지 마세요.\n이 안내는 배송·실물 수령 완료를 뜻하지 않습니다.\n\n이벤트 번호: ${event.id}`,images:[]};}
+  setDeliveryMode(guildId,actor,eventId,direct) {
+    this.guard();const event=this.event(eventId,guildId);
+    if(event.owner_id!==actor.userId||event.status!=='DRAFT')fail('본인의 초안에서만 전달 방식을 바꿀 수 있어요.');
+    this.store.tx(()=>{
+      if(direct) {
+        this.store.run('INSERT INTO direct_events(event_id) VALUES (?) ON CONFLICT(event_id) DO UPDATE SET event_id=excluded.event_id',eventId);
+        // 디지털 상품을 이미 등록했다면 명시적으로 확인한 방식 변경 시 삭제합니다.
+        for(let slot=1;slot<=event.winner_count;slot++)this.store.run('UPDATE prizes SET secret=? WHERE event_id=? AND slot=?',this.vault.seal(this.contactContent(event),`prize:${eventId}:${slot}`),eventId,slot);
+      } else if(this.direct(eventId)) {
+        this.store.run('DELETE FROM direct_events WHERE event_id=?',eventId);
+        this.store.run('UPDATE prizes SET secret=NULL WHERE event_id=?',eventId);
+      }
+    });
+  }
+  requireHostAllowed(guildId,userId) {
+    if(this.store.get('SELECT user_id FROM host_blocks WHERE guild_id=? AND user_id=?',guildId,userId))fail('이 서버에서 이벤트 주최가 제한된 계정이에요. 관리자에게 문의해주세요.');
+  }
+  restrictHost(guildId,actor,userId,blocked) {
+    this.guard();this.requireManager(guildId,actor);
+    if(!/^\d{15,22}$/.test(userId))fail('대상 사용자를 확인해주세요.');
+    if(blocked)this.store.run('INSERT INTO host_blocks(guild_id,user_id,actor_id,created_at) VALUES (?,?,?,?) ON CONFLICT(guild_id,user_id) DO UPDATE SET actor_id=excluded.actor_id,created_at=excluded.created_at',guildId,userId,actor.userId,this.now());
+    else this.store.run('DELETE FROM host_blocks WHERE guild_id=? AND user_id=?',guildId,userId);
+  }
+  lookup(guildId,actor,query) {
+    this.guard();const raw=query.trim();
+    const match=/^(?:giveaway-delivery:)?([a-f0-9]{16})$/.exec(raw);
+    if(!match)fail('이벤트·당첨 번호 또는 giveaway-delivery:번호를 입력해주세요.');
+    const key=match[1],claim=this.store.claim(key);
+    if(claim) {
+      const event=this.event(claim.event_id,guildId);
+      if(actor.userId!==claim.user_id&&actor.userId!==event.owner_id&&!this.manager(guildId,actor))fail('본인과 관련된 기록만 조회할 수 있어요.');
+      return {event,claim,audit:this.store.all('SELECT action,actor_id,created_at FROM audit WHERE claim_id=? ORDER BY created_at DESC,id DESC LIMIT 8',key)};
     }
-    return this.vault.open(prize.secret, `prize:${eventId}:${slot}`);
+    return {event:this.visibleEvent(guildId,actor,key),claim:null,audit:[]};
   }
   closeIfDone(eventId) {
     const event = this.store.event(eventId);
@@ -511,10 +544,15 @@ export class Engine {
   }
   recover() {
     this.guard();
+    this.store.run("UPDATE prizes SET secret=NULL WHERE event_id IN (SELECT id FROM events WHERE status IN ('REJECTED','CANCELLED','COMPLETED'))");
+    this.store.run("UPDATE prizes SET secret=NULL WHERE status IN ('EXHAUSTED','RETURNED','DELIVERED')");
     this.store.run("UPDATE claims SET status='DELIVERY_FAILED',last_error='RESTART_BEFORE_SEND' WHERE status='PREPARING'");
     this.store.run("UPDATE claims SET status='SUBMITTING',upload_until=NULL,upload_token=NULL WHERE status='UPLOADING'");
     this.store.run("UPDATE claims SET status='DELIVERY_UNKNOWN',last_error='RESTART_DURING_SEND' WHERE status='SENDING'");
     this.store.run("UPDATE jobs SET status='UNKNOWN' WHERE status='SENDING'");
+    this.store.run("UPDATE reports SET status='UNKNOWN' WHERE status='SENDING'");
+    for(const claim of this.store.all("SELECT id,proof_version FROM claims WHERE status='REVIEW' AND proof IS NOT NULL"))this.store.queue('proof',claim.id,this.now(),`:host:${claim.proof_version}`);
+    for(const claim of this.store.all("SELECT id,proof_version FROM claims WHERE status='SUBMITTING' AND feedback IS NOT NULL"))this.store.queue('rework',claim.id,this.now(),`:dm:${claim.proof_version}`);
     for (const row of this.store.all('SELECT id FROM events WHERE public_message_id IS NOT NULL')) this.dirty.add(row.id);
   }
   finishJob(job, message) {
@@ -542,8 +580,8 @@ export class Engine {
       if ((job.kind === 'application' && event.status !== 'PENDING') ||
         (job.kind === 'start' && event.status !== 'STARTING') ||
         (job.kind === 'winner' && claim.status !== 'ANNOUNCING') ||
-        (job.kind === 'proof' && (claim.status !== 'REVIEW' || !job.id.endsWith(`:${claim.proof_version}`))) ||
-        (job.kind === 'rework' && (claim.status !== 'SUBMITTING' || !job.id.endsWith(`:${claim.proof_version}`)))) {
+        (job.kind === 'proof' && (claim.status !== 'REVIEW' || !job.id.includes(':host:') || !job.id.endsWith(`:${claim.proof_version}`))) ||
+        (job.kind === 'rework' && (claim.status !== 'SUBMITTING' || !job.id.includes(':dm:') || !job.id.endsWith(`:${claim.proof_version}`)))) {
         this.store.run("UPDATE jobs SET status='DONE' WHERE id=?", job.id);
         continue;
       }

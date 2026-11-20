@@ -81,6 +81,15 @@ export class Store extends StoreBase {
         token TEXT NOT NULL, step TEXT NOT NULL, data TEXT NOT NULL, baseline TEXT NOT NULL,
         PRIMARY KEY(guild_id,user_id)
       );
+      CREATE TABLE IF NOT EXISTS direct_events (event_id TEXT PRIMARY KEY REFERENCES events(id));
+      CREATE TABLE IF NOT EXISTS host_blocks (
+        guild_id TEXT NOT NULL REFERENCES guilds(id), user_id TEXT NOT NULL, actor_id TEXT NOT NULL,
+        created_at INTEGER NOT NULL, PRIMARY KEY(guild_id,user_id)
+      );
+      CREATE TABLE IF NOT EXISTS reports (
+        id TEXT PRIMARY KEY, event_id TEXT NOT NULL REFERENCES events(id), claim_id TEXT, reporter_id TEXT NOT NULL,
+        status TEXT NOT NULL, channel_id TEXT, message_id TEXT, created_at INTEGER NOT NULL, reviewer_id TEXT
+      );
       PRAGMA user_version=1;
     `);
   }

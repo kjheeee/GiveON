@@ -12,7 +12,7 @@ test('당첨 인원만큼 사전 등록해야 신청할 수 있고 관리자는 
   f.engine.setPrize(GUILD, HOST, eid, 2, content());
   f.engine.submit(GUILD, HOST, eid);
   assert.equal(f.store.event(eid).status, 'PENDING');
-  assert.throws(() => f.engine.unusedPrize(GUILD, MANAGER, eid, 1), /주최자 본인/);
+  assert.equal(f.engine.unusedPrize,undefined);
 });
 
 test('관리 역할 부여는 소유자만 가능하며 다른 서버의 정보는 접근할 수 없다', async t => {
@@ -103,15 +103,15 @@ test('인증 수령 클릭 후 5분, 제출 후 무기한 검수 대기, 보완 
   f.engine.submitProof(GUILD, user, claim.id, content('텍스트 인증'));
   f.advance(86400_000); await f.engine.tick();
   assert.equal(f.store.claim(claim.id).status, 'REVIEW');
-  assert.equal(f.engine.viewProof(GUILD, MANAGER, claim.id).content.text, '텍스트 인증');
-  await f.engine.review(GUILD, MANAGER, claim.id, 1, 'rework', '올해 시험인지 확인할 수 있게 제출해주세요.');
+  assert.equal(f.engine.viewProof(GUILD, HOST, claim.id).content.text, '텍스트 인증');
+  await f.engine.review(GUILD, HOST, claim.id, 1, 'rework', '올해 시험인지 확인할 수 있게 제출해주세요.');
   const rework = f.store.claim(claim.id);
   assert.equal(rework.submit_deadline, f.now() + PROOF_MS);
   assert.equal(rework.proof, null);
   f.advance(PROOF_MS - 1);
   f.engine.submitProof(GUILD, user, claim.id, content('보완 인증'));
-  await assert.rejects(f.engine.review(GUILD, MANAGER, claim.id, 1, 'approve'), /새 인증 자료/);
-  await f.engine.review(GUILD, MANAGER, claim.id, 2, 'approve');
+  await assert.rejects(f.engine.review(GUILD, HOST, claim.id, 1, 'approve'), /새 인증 자료/);
+  await f.engine.review(GUILD, HOST, claim.id, 2, 'approve');
   assert.equal(f.store.claim(claim.id).status, 'DELIVERED');
   assert.equal(f.store.claim(claim.id).proof, null);
   assert.equal(f.store.claim(claim.id).feedback, null);
@@ -127,9 +127,11 @@ test('사진만으로도 인증 가능하며 다른 유저·서버는 제출과 
   await f.engine.startClaim(GUILD, user, c.id);
   assert.throws(() => f.engine.submitProof(GUILD, HOST, c.id, content('다른 사람')), /본인의 당첨/);
   f.engine.submitProof(GUILD, user, c.id, { text: '', images: [{ ext: 'png', data: Buffer.from('test-image').toString('base64') }] });
-  assert.throws(() => f.engine.viewProof(GUILD, HOST, c.id), /관리자만/);
+  assert.throws(() => f.engine.viewProof(GUILD, MANAGER, c.id), /주최자만/);
+  assert.throws(() => f.engine.viewProof(GUILD, OWNER, c.id), /주최자만/);
+  await assert.rejects(f.engine.review(GUILD,MANAGER,c.id,1,'approve'),/주최자만/);
   assert.throws(() => f.engine.viewProof(OTHER_GUILD, OWNER, c.id), /이 서버/);
-  assert.equal(f.engine.viewProof(GUILD, MANAGER, c.id).content.images.length, 1);
+  assert.equal(f.engine.viewProof(GUILD, HOST, c.id).content.images.length, 1);
 });
 
 test('정확히 5분이 되면 늦은 제출을 거부하고 해당 자리만 리롤한다', async t => {
@@ -150,7 +152,7 @@ test('인증 최종 거절 시 원문 삭제 및 동일 이벤트 재당첨 제�
   const [c] = f.claims(eid);
   await f.engine.startClaim(GUILD, f.members.get(c.user_id), c.id);
   f.engine.submitProof(GUILD, f.members.get(c.user_id), c.id, content('불합격 자료'));
-  await f.engine.review(GUILD, MANAGER, c.id, 1, 'deny');
+  await f.engine.review(GUILD, HOST, c.id, 1, 'deny');
   assert.equal(f.store.claim(c.id).proof, null);
   assert.equal(f.store.claim(c.id).status, 'DENIED');
   assert.notEqual(f.claims(eid).find(item => item.id !== c.id).user_id, c.user_id);
@@ -197,13 +199,11 @@ test('전송 결과 불명인데 DM에서 못 찾으면 원문과 상태를 유�
   assert.ok(f.store.get('SELECT secret FROM prizes WHERE event_id=? AND slot=1', eid).secret);
 });
 
-test('후보가 없으면 종료하고 미지급 상품을 주최자만 회수·삭제할 수 있다', async t => {
+test('후보가 없으면 종료하고 미지급 상품 원문은 회수 없이 삭제한다', async t => {
   const f = fixture(t), eid = await f.event();
   f.advance(60_001); await f.engine.tick();
   assert.equal(f.store.event(eid).status, 'COMPLETED');
-  assert.ok(f.engine.unusedPrize(GUILD, HOST, eid, 1).text);
-  assert.throws(() => f.engine.unusedPrize(GUILD, MANAGER, eid, 1), /주최자 본인/);
-  f.engine.unusedPrize(GUILD, HOST, eid, 1, true);
+  assert.equal(f.engine.unusedPrize,undefined);
   assert.equal(f.store.get('SELECT secret FROM prizes WHERE event_id=? AND slot=1', eid).secret, null);
 });
 

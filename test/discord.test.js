@@ -101,24 +101,24 @@ test('전송 호출 전 실패와 Discord 거절은 확정 실패, 호출 후 �
   await assert.rejects(transport.sendPrize('dm', event, { id: 'c', slot: 1 }, content()), e => !e.definite);
 });
 
-test('인증 자료 UI는 관리자에게만 ephemeral로 표시하며 권한 없는 조회는 첨부를 반환하지 않는다', async t => {
+test('인증 자료 UI는 주최자에게만 ephemeral로 표시하며 관리자 조회는 첨부를 반환하지 않는다', async t => {
   const f = fixture(t), user = actor(4), eid = await f.event({ proof: true, participants: [user] });
   f.advance(60_001); await f.engine.tick();
   const [claim] = f.claims(eid);
   await f.engine.startClaim(GUILD, user, claim.id);
   f.engine.submitProof(GUILD, user, claim.id, { text: 'PRIVATE-PROOF', images: [{ ext: 'png', data: 'aW1hZ2U=' }] });
   const handle = handler(f.engine, f.transport);
-  const denied = interaction(HOST, `pview:${claim.id}`);
+  const denied = interaction(MANAGER, `pview:${claim.id}`);
   await handle(denied);
-  assert.equal(denied.deferOptions.flags, MessageFlags.Ephemeral);
+  assert.equal(denied.replies[0].flags, MessageFlags.Ephemeral);
   assert.equal(denied.replies[0].files, undefined);
   assert.equal(JSON.stringify(denied.replies).includes('PRIVATE-PROOF'), false);
-  const allowed = interaction(MANAGER, `pview:${claim.id}`);
+  const allowed = interaction(HOST, `pview:${claim.id}`);
   await handle(allowed);
   assert.equal(allowed.deferOptions.flags, MessageFlags.Ephemeral);
-  assert.ok(allowed.replies[0].content.includes('PRIVATE-PROOF'));
+  assert.ok(JSON.stringify(allowed.replies[0]).includes('PRIVATE-PROOF'));
   assert.equal(allowed.replies[0].files.length, 1);
-  assert.ok(allowed.replies[0].components[0].toJSON().components[0].custom_id.endsWith(':1'));
+  assert.ok(allowed.replies[0].components[0].toJSON().components[1].custom_id.endsWith(':1'));
 });
 
 test('인증 입력창은 텍스트만으로도 예약·검수 전환을 완료하고 비공개로 응답한다', async t => {

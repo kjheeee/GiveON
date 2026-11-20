@@ -13,7 +13,7 @@ function testStore() {
   if(process.env.GIVEON_TEST_DRIVER!=='mysql')return new Store();
   const store=new MySQLStore(mysqlTestOptions());
   // 위에서 검증한 전용 테스트 DB만 초기화합니다. 운영 DB 이름은 허용하지 않습니다.
-  for(const table of ['audit','jobs','claims','entries','draft_steps','prizes','events','panels','setup_sessions','event_templates','guilds','runtime_lock'])store.run(`DELETE FROM ${table}`);
+  for(const table of ['reports','host_blocks','direct_events','audit','jobs','claims','entries','draft_steps','prizes','events','panels','setup_sessions','event_templates','guilds','runtime_lock'])store.run(`DELETE FROM ${table}`);
   return store;
 }
 
@@ -26,6 +26,15 @@ export const BLOCK_ROLE = '100000000000013';
 export const actor = (n, roles = []) => ({ userId: `10000000000${String(n).padStart(4, '0')}`, roles, isBot: false });
 export const OWNER = actor(1), HOST = actor(2), MANAGER = actor(3, [MANAGER_ROLE]);
 export const content = (text = '상품 비밀 코드 TEST-COUPON-1234') => ({ text, images: [] });
+
+export function interaction(user,customId,options={},type='button') {
+  return {guildId:GUILD,user:{id:user.userId,bot:false},customId,deferred:false,replies:[],
+    commandName:type==='chat'?customId:undefined,channelId:'100000000000022',
+    inGuild:()=>true,isChatInputCommand:()=>type==='chat',isButton:()=>type==='button',isModalSubmit:()=>type==='modal',isAnySelectMenu:()=>type==='select',
+    values:options.values||[],fields:{getTextInputValue:name=>options[name]||'',getUploadedFiles:()=>null},
+    async showModal(value){this.modal=value;this.replied=true;},async deferReply(options){this.deferOptions=options;this.deferred=true;},
+    async deferUpdate(){this.updated=true;this.deferred=true;},async editReply(options){this.replies.push(options);},async reply(options){this.replies.push(options);this.replied=true;}};
+}
 
 export function fixture(t, suppliedStore) {
   let clock = 2_000_000_000_000, messageSeq = 0;

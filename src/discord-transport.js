@@ -48,6 +48,7 @@ export class DiscordTransport {
         { name: '참여 거절 역할', value: roles(event.deny_roles) },
       ).setFooter({ text: `GiveON · 이벤트 ${event.id}` });
     if (event.ends_at) embed.addFields({ name: '참여 마감', value: time(event.ends_at) });
+    if(this.store.get('SELECT event_id FROM direct_events WHERE event_id=?',event.id))embed.addFields({name:'전달 방식',value:'실물·직접 전달 · 주최자와 개인 DM으로 연락 (주소는 봇에 제출하지 마세요)'});
     if (event.proof_required) embed.addFields({ name: '수령 전 인증 필요', value: event.proof_instructions },{name:'인증 제출 기한',value:'수령 버튼을 누른 후 5분 내 텍스트·이미지를 제출해주세요.'});
     return embed;
   }
@@ -60,6 +61,7 @@ export class DiscordTransport {
     const entries=this.store.get('SELECT count(*) n FROM entries WHERE event_id=?',event.id).n;
     let body=`## ${event.title}\n${event.description}\n\n주최자 <@${event.owner_id}>\n당첨 **${event.winner_count}명** · 참여 **${entries}명**\n상태: **${statuses[event.status]}** · 수령 제한 **${event.claim_ms/60000}분**\n참여 가능: ${roleText(event.allow_roles)}\n참여 차단: ${roleText(event.deny_roles)}`;
     if(event.ends_at)body+=`\n참여 마감: ${time(event.ends_at)}`;
+    if(this.store.get('SELECT event_id FROM direct_events WHERE event_id=?',event.id))body+='\n전달 방식: **실물·직접 전달** · 주최자와 개인 DM으로 연락 (주소는 봇에 제출하지 마세요)';
     if(event.proof_required){const available=Math.max(0,3800-body.length);body+=`\n\n**수령 전 인증 필요**\n${event.proof_instructions.slice(0,available)}${event.proof_instructions.length>available?'…\n전체 인증 안내는 상세 보기에서 확인하세요.':''}`;}
     body+=`\n-# 이벤트 ${event.id}`;
     const container=new ContainerBuilder().setAccentColor(0x18e979).addTextDisplayComponents(new TextDisplayBuilder().setContent(body)).addActionRowComponents(...this.eventComponents(event));
@@ -79,14 +81,28 @@ export class DiscordTransport {
           .setDescription(content.text || '첨부된 상품 이미지를 확인해주세요.')
           .setFooter({ text: `giveaway-delivery:${claim.id}` })],
         files: files(content, 'prize'), allowedMentions: { parse: [] },
+        components:[row(button(`mod:reportclaim:${claim.id}`,'전달 내용 신고',ButtonStyle.Danger))],
         nonce: claim.delivery_nonce, enforceNonce: true,
       });
     } catch (error) { if (!sending) error.definite = true; throw markDefinite(error); }
   }
+  async sendReport(channelId,report,content) {
+    let sending=false;
+    try {
+      const channel=await this.client.channels.fetch(channelId);sending=true;
+      return await channel.send({embeds:[new EmbedBuilder().setColor(0xed4245).setTitle('이벤트·상품 신고')
+        .setDescription(content.text||'(첨부된 신고 증거를 확인해주세요.)')
+        .addFields({name:'상품 · 이벤트',value:`${report.event.title}\n${report.event.id}`},{name:'주최자 · 신고자',value:`<@${report.event.owner_id}> · <@${report.reporterId}>`},
+          {name:'당첨 번호',value:report.claim?.id||'이벤트 자체 신고'})
+        .setFooter({text:`giveon-report:${report.id}`})],files:files(content,'report'),
+        components:[row(button(`mod:view:${report.id}`,'신고 검토'))],allowedMentions:{parse:[]},nonce:nonce(`report:${report.id}`),enforceNonce:true});
+    } catch(error){if(!sending)error.definite=true;throw markDefinite(error);}
+  }
   async channelFor(job, event, claim) {
+    if(job.kind==='proof')return job.id.includes(':host:')&&job.channel_id?job.channel_id:this.prepareDM(event.owner_id);
     if (job.channel_id) return job.channel_id;
     const settings = this.store.guild(event.guild_id);
-    if (['application', 'proof', 'deliveryIssue', 'drawIssue'].includes(job.kind)) return settings.manager_channel;
+    if (['application', 'deliveryIssue', 'drawIssue'].includes(job.kind)) return settings.manager_channel;
     if (['rejected'].includes(job.kind)) return this.prepareDM(event.owner_id);
     if (['rework', 'denied'].includes(job.kind)) return this.prepareDM(claim.user_id);
     if(['winner','closed'].includes(job.kind)&&event.public_message_id) {
@@ -126,23 +142,25 @@ export class DiscordTransport {
           components = [row(button(`claim:${claim.id}`, '수령', ButtonStyle.Success))];
           break;
         case 'proof':
-          embed.setTitle('인증 검수 요청').setDescription(`상품: ${event.title}\n당첨 번호: \`${claim.id}\`\n신청자: <@${claim.user_id}>\n제출 버전: ${claim.proof_version}\n자료는 권한 확인 후 비공개로 표시합니다.`);
-          components = [row(button(`pview:${claim.id}`, '인증 자료 조회'))];
+          embed.setTitle('주최자 인증 검수 요청').setDescription(`상품: ${event.title}\n당첨 번호: \`${claim.id}\`\n당첨자: <@${claim.user_id}>\n제출 버전: ${claim.proof_version}\n아래 버튼으로 자료를 확인하고 승인·보완 요청·거절을 진행해주세요.\nDM을 사용할 수 없으면 서버 안내의 내 신청 → 내 이벤트 인증 대기에서도 확인할 수 있어요.`);
+          components = [row(button(`pview:${claim.id}`, '인증 자료 확인·검수'))];
           break;
         case 'rework': {
           const feedback = claim.feedback ? this.vault.open(claim.feedback, `feedback:${claim.id}`).text : '자료를 보완해주세요.';
-          embed.setTitle('인증 보완 요청').setDescription(`${feedback}\n\n당첨 번호: \`${claim.id}\`\n재제출 기한: ${time(claim.submit_deadline)}\n이벤트 서버의 안내 패널에서 내 당첨 → 인증 자료 제출 버튼을 눌러주세요.`);
+          embed.setTitle('인증 보완 요청').setDescription(`${feedback}\n\n상품: ${event.title}\n당첨 번호: \`${claim.id}\`\n재제출 기한: ${time(claim.submit_deadline)}\n아래 보완 제출 버튼으로 이 DM에서 사진·메시지를 다시 제출할 수 있어요.`);
+          components=[row(button(`ui:proofupload:${claim.id}:${claim.proof_version}`,'보완 제출',ButtonStyle.Success),button(`proofstatus:${claim.id}`,'상태 확인',ButtonStyle.Secondary))];
           break;
         }
         case 'denied': embed.setTitle('인증 거절').setDescription(`이벤트: ${event.title}\n당첨 번호: ${claim.id}\n해당 당첨 자리는 리롤됩니다.`); break;
         case 'expired': embed.setTitle('당첨 자리 리롤').setDescription(`이벤트: ${event.title}\n당첨 번호: ${claim.id}\n기존 당첨이 종료되어 해당 자리의 후보를 다시 추첨합니다.`); break;
-        case 'received': embed.setTitle('상품 수령 완료').setDescription(`이벤트: ${event.title}\n당첨자: <@${claim.user_id}>\n자리: ${claim.slot}\n당첨 번호: ${claim.id}`); break;
+        case 'received': embed.setTitle(this.store.get('SELECT event_id FROM direct_events WHERE event_id=?',event.id)?'주최자 연락 안내 완료':'상품 수령 완료').setDescription(`이벤트: ${event.title}\n당첨자: <@${claim.user_id}>\n자리: ${claim.slot}\n당첨 번호: ${claim.id}`); break;
         case 'deliveryIssue': embed.setTitle('상품 전달 상태 확인 필요').setDescription(`이벤트: ${event.title}\n당첨 번호: ${claim.id}\n상태: ${statuses[claim.status]}\n실패 건은 내 당첨의 다시 시도 버튼, 결과 불명 건은 관리자 메뉴의 지급 결과 확인 버튼을 사용해주세요.`); break;
         case 'drawIssue': embed.setTitle('추첨 지연').setDescription(`이벤트: ${event.title}\n이벤트 번호: ${event.id}\n참여자 역할 확인에 실패해 추첨을 보류했어요. 서버 접근 권한과 네트워크를 확인해주세요. 다음 주기에 재시도합니다.`); break;
-        case 'rejected': embed.setTitle('이벤트 신청 거절').setDescription(`상품: ${event.title}\n이벤트 번호: ${event.id}\n사유: ${event.rejection_reason}\n안내 패널의 내 신청 → 미지급 상품 회수 버튼으로 보관 내용을 확인할 수 있어요.`); break;
+        case 'rejected': embed.setTitle('이벤트 신청 거절').setDescription(`상품: ${event.title}\n이벤트 번호: ${event.id}\n사유: ${event.rejection_reason}\n봇의 상품 원문은 삭제되었습니다.`); break;
         case 'closed': {
           const sent = this.store.get("SELECT count(*) n FROM prizes WHERE event_id=? AND status='DELIVERED'", event.id).n;
-          embed.setTitle(event.status === 'CANCELLED' ? '이벤트 취소' : '이벤트 마감').setDescription(`상품: ${event.title}\n이벤트 번호: ${event.id}\n지급 완료: ${sent}/${event.winner_count}\n${sent < event.winner_count ? '남은 미지급 상품은 주최자가 회수할 수 있어요.' : '모든 상품이 지급되었습니다.'}`);
+          const direct=Boolean(this.store.get('SELECT event_id FROM direct_events WHERE event_id=?',event.id));
+          embed.setTitle(event.status === 'CANCELLED' ? '이벤트 취소' : '이벤트 마감').setDescription(`상품: ${event.title}\n이벤트 번호: ${event.id}\n${direct?'연락 안내 완료':'지급 완료'}: ${sent}/${event.winner_count}\n${sent < event.winner_count ? '남은 미지급 상품 원문은 삭제되었습니다.' : direct?'실제 전달은 주최자와 당첨자가 개인 DM으로 진행합니다.':'모든 상품이 지급되었습니다.'}`);
           break;
         }
         default: throw Object.assign(new Error('알림 종류 오류'), { definite: true });
@@ -169,6 +187,8 @@ export class DiscordTransport {
   findPrize(claim) { return this.findMessage(claim.dm_channel_id, `giveaway-delivery:${claim.id}`, claim.send_started, claim.delivery_nonce); }
   async findNotification(job, event, claim) {
     const channel=await this.channelFor(job,event,claim);
+    if(job.kind==='proof')return this.findMessage(channel,`job:${job.id}`,job.created_at,null,`papprove:${claim.id}:${claim.proof_version}`);
+    if(job.kind==='rework')return this.findMessage(channel,`job:${job.id}`,job.created_at,null,`ui:proofupload:${claim.id}:${claim.proof_version}`);
     if(job.kind==='start') {
       const found=await this.findMessage(channel,`GiveON · 이벤트 ${event.id}`,job.created_at,null,`join:${event.id}`);
       if(found) return found;
