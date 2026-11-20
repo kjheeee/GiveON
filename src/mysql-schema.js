@@ -16,7 +16,7 @@ export const mysqlSchema=[
     started_at BIGINT,ends_at BIGINT,approved_by ${id},rejection_reason TEXT,public_message_id ${id},
     FOREIGN KEY(guild_id) REFERENCES guilds(id))`),
   table(`CREATE TABLE IF NOT EXISTS prizes (event_id ${ref} NOT NULL,slot INT NOT NULL,secret MEDIUMBLOB,
-    status VARCHAR(32) NOT NULL DEFAULT 'AVAILABLE',delivery_mode VARCHAR(16) NOT NULL DEFAULT 'DIGITAL',PRIMARY KEY(event_id,slot),FOREIGN KEY(event_id) REFERENCES events(id))`),
+    status VARCHAR(32) NOT NULL DEFAULT 'AVAILABLE',delivery_mode VARCHAR(16) NOT NULL DEFAULT 'DIGITAL',name BLOB,name_public TINYINT NOT NULL DEFAULT 1,PRIMARY KEY(event_id,slot),FOREIGN KEY(event_id) REFERENCES events(id))`),
   table(`CREATE TABLE IF NOT EXISTS entries (event_id ${ref} NOT NULL,user_id ${id} NOT NULL,joined_at BIGINT NOT NULL,
     PRIMARY KEY(event_id,user_id),FOREIGN KEY(event_id) REFERENCES events(id))`),
   table(`CREATE TABLE IF NOT EXISTS claims (

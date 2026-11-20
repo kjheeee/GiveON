@@ -11,7 +11,7 @@ function request(user,id,fields={},type='button',ephemeral=false) {
     customId:id,commandName:type==='chat'?'gon':undefined,options:{getSubcommandGroup:()=>null,getSubcommand:()=>id==='setting'?'settings':id},guildId:GUILD,channelId:'100000000000022',user:{id:user.userId,bot:false},
     message:ephemeral?{flags:{has:flag=>flag===MessageFlags.Ephemeral}}:undefined,
     inGuild:()=>true,isChatInputCommand:()=>type==='chat',isButton:()=>type==='button',isModalSubmit:()=>type==='modal',isAnySelectMenu:()=>type==='select',
-    fields:{getTextInputValue:key=>fields[key]||'',getUploadedFiles:()=>null},values:fields.values||[],replies:[],
+    fields:{getTextInputValue:key=>fields[key]||'',getStringSelectValues:key=>[fields[key]||'public'],getUploadedFiles:()=>null},values:fields.values||[],replies:[],
     async deferReply(options){this.deferred=true;this.deferOptions=options;},async deferUpdate(){this.deferred=true;this.updated=true;},
     async editReply(options){this.replies.push(options);},async reply(options){this.replied=true;this.replies.push(options);},
     async deleteReply(){this.deleted=true;},
@@ -115,6 +115,7 @@ test('이벤트 생성·자리별 상품 등록·인증 설정·승인 요청까
   const event=f.store.get('SELECT * FROM events WHERE owner_id=?',HOST.userId);assert.equal(event.status,'DRAFT');assert.ok(create.replies[0].components.length);
   const early=request(HOST,`ui:submit:${event.id}`);await f.handle(early);assert.match(early.replies[0].content,/모두 등록/);
   for(const slot of [1,2]){
+    const info=request(HOST,`form:product:${event.id}:${slot}`,{name:`상품 ${slot}`,visibility:'public'},'modal');await f.handle(info);
     const add=request(HOST,`form:prize:${event.id}`,{slot:String(slot),text:`SECRET-PRIZE-${slot}`},'modal',true);await f.handle(add);
     assert.equal(add.updated,true);assert.equal(JSON.stringify(add.replies).includes('SECRET-PRIZE'),false);
   }

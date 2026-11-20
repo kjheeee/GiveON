@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import { ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder,ContainerBuilder,TextDisplayBuilder,MessageFlags } from 'discord.js';
 import { files } from './media.js';
 import { HOST_NOTICE_KINDS } from './engine.js';
-import { isDirect,deliverySummary } from './delivery.js';
+import { isDirect,deliverySummary,productInfo } from './delivery.js';
 
 export const statuses = {
   DRAFT: '초안', PENDING: '승인 대기', STARTING: '시작 게시 대기', RUNNING: '참여 중', DRAWN: '추첨 완료·수령 진행',
@@ -36,7 +36,7 @@ export class DiscordTransport {
       return { userId: member.id, roles: [...member.roles.cache.keys()], isBot: member.user.bot };
     } catch (error) { if ([10007, 10013].includes(error.code)) return null; throw markDefinite(error); }
   }
-  eventEmbed(event, marker = `job:start:${event.id}`) {
+  eventEmbed(event,{revealPrivate=false}={}) {
     const entries = this.store.get('SELECT count(*) n FROM entries WHERE event_id=?', event.id).n;
     const roles = value => JSON.parse(value).map(id => `<@&${id}>`).join(', ') || '없음';
     const embed = new EmbedBuilder().setColor(0x5865f2).setTitle(event.title).setDescription(event.description)
@@ -51,7 +51,8 @@ export class DiscordTransport {
       ).setFooter({ text: `GiveON · 이벤트 ${event.id}` });
     if (event.ends_at) embed.addFields({ name: '참여 마감', value: time(event.ends_at) });
     const summary=deliverySummary(this.store,event.id);
-    embed.addFields({name:'전달 방식',value:summary.label},{name:'실물·직접 전달 자리',value:summary.directSlots.join(', ')||'없음'},{name:'디지털 자리',value:summary.digitalSlots.join(', ')||'없음'});
+    embed.addFields({name:'전달 방식',value:summary.label},{name:'실물·직접 전달 상품 번호',value:summary.directSlots.join(', ')||'없음'},{name:'디지털 상품 번호',value:summary.digitalSlots.join(', ')||'없음'});
+    for(const slot of this.store.all('SELECT slot FROM prizes WHERE event_id=? ORDER BY slot LIMIT 3',event.id)){const p=productInfo(this.store,this.vault,event,slot.slot,revealPrivate);embed.addFields({name:`${p.slot}번 상품`,value:p.name});}
     if (event.proof_required) embed.addFields({ name: '수령 전 인증 필요', value: event.proof_instructions },{name:'인증 제출 기한',value:'수령 버튼을 누른 후 5분 내 텍스트·이미지를 제출해주세요.'});
     return embed;
   }
@@ -66,6 +67,8 @@ export class DiscordTransport {
     if(event.ends_at)body+=`\n참여 마감: ${time(event.ends_at)}`;
     const summary=deliverySummary(this.store,event.id);body+=`\n전달 방식: **${summary.label}**`;
     if(summary.directSlots.length)body+='\n실물 상품은 주최자와 개인 DM으로 연락해주세요. 주소는 봇에 제출하지 마세요.';
+    let shown=0;for(const slot of this.store.all('SELECT slot FROM prizes WHERE event_id=? ORDER BY slot LIMIT 5',event.id)){const p=productInfo(this.store,this.vault,event,slot.slot),line=`\n${p.slot}번 상품: **${p.name}**`;if(body.length+line.length>3540)break;body+=line;shown++;}
+    if(shown<event.winner_count)body+='\n전체 상품은 상세 보기 → 상품 목록에서 확인하세요.';
     if(event.proof_required){const available=Math.max(0,3800-body.length);body+=`\n\n**수령 전 인증 필요**\n${event.proof_instructions.slice(0,available)}${event.proof_instructions.length>available?'…\n전체 인증 안내는 상세 보기에서 확인하세요.':''}`;}
     body+=`\n-# 이벤트 ${event.id}`;
     const container=new ContainerBuilder().setAccentColor(0x18e979).addTextDisplayComponents(new TextDisplayBuilder().setContent(body)).addActionRowComponents(...this.eventComponents(event));
@@ -78,10 +81,11 @@ export class DiscordTransport {
   async sendPrize(channelId, event, claim, content) {
     let sending = false;
     try {
+      const product=productInfo(this.store,this.vault,event,claim.slot,true);
       const channel = await this.client.channels.fetch(channelId);
       sending = true;
       return await channel.send({
-        embeds: [new EmbedBuilder().setColor(0x57f287).setTitle(`${event.title} · ${claim.slot}번 상품`)
+        embeds: [new EmbedBuilder().setColor(0x57f287).setTitle(`${event.title} · ${claim.slot}번 ${product.name}`)
           .setDescription(content.text || '첨부된 상품 이미지를 확인해주세요.')
           .setFooter({ text: `giveaway-delivery:${claim.id}` })],
         files: files(content, 'prize'), allowedMentions: { parse: [] },
@@ -116,12 +120,12 @@ export class DiscordTransport {
       const users = [], roles = [];
       switch (job.kind) {
         case 'hostCreated':
-          embed.setTitle('이벤트 초안 생성').setDescription(`상품: ${event.title}\n이벤트 번호: ${event.id}\n내 신청에서 내용을 완성하고 승인 요청을 진행해주세요.\n진행 알림 설정: /gon alert on 또는 /gon alert off`);break;
+          embed.setTitle('이벤트 초안 생성').setDescription(`이벤트: ${event.title}\n이벤트 번호: ${event.id}\n내 신청에서 내용을 완성하고 승인 요청을 진행해주세요.\n진행 알림 설정: /gon alert on 또는 /gon alert off`);break;
         case 'hostStarted':
-          embed.setTitle('이벤트 진행 승인·게시 완료').setDescription(`상품: ${event.title}\n이벤트 번호: ${event.id}\n참여 마감: ${time(event.ends_at)}\n진행 알림 설정: /gon alert on 또는 /gon alert off`);break;
+          embed.setTitle('이벤트 진행 승인·게시 완료').setDescription(`이벤트: ${event.title}\n이벤트 번호: ${event.id}\n참여 마감: ${time(event.ends_at)}\n진행 알림 설정: /gon alert on 또는 /gon alert off`);break;
         case 'hostReceived': {
           const direct=isDirect(this.store,event.id,claim.slot);
-          embed.setTitle(direct?'당첨자에게 연락 안내 완료':'당첨자 상품 수령 완료').setDescription(`상품: ${event.title}\n이벤트 번호: ${event.id}\n당첨자: <@${claim.user_id}>\n자리: ${claim.slot}\n당첨 번호: ${claim.id}${direct?'\n실물 전달은 당첨자와 개인 DM으로 진행해주세요.':''}\n진행 알림 설정: /gon alert on 또는 /gon alert off`);break;
+          embed.setTitle(direct?'당첨자에게 연락 안내 완료':'당첨자 상품 수령 완료').setDescription(`이벤트: ${event.title}\n${claim.slot}번 상품: ${productInfo(this.store,this.vault,event,claim.slot,true).name}\n이벤트 번호: ${event.id}\n당첨자: <@${claim.user_id}>\n당첨 번호: ${claim.id}${direct?'\n실물 전달은 당첨자와 개인 DM으로 진행해주세요.':''}\n진행 알림 설정: /gon alert on 또는 /gon alert off`);break;
         }
         case 'application':
           embed.setTitle('이벤트 승인 요청').setDescription(`**${event.title}**\n${event.description}`)
@@ -130,7 +134,7 @@ export class DiscordTransport {
               { name: '상품 전달 방식', value: deliverySummary(this.store,event.id).label },
               { name: '인증 안내', value: event.proof_instructions || '없음' },
               { name: '역할 조건', value: `허용: ${JSON.parse(event.allow_roles).map(id => `<@&${id}>`).join(', ') || '제한 없음'}\n거절: ${JSON.parse(event.deny_roles).map(id => `<@&${id}>`).join(', ') || '없음'}` });
-          components = [row(button(`eapprove:${event.id}`, '승인·시작', ButtonStyle.Success), button(`ereject:${event.id}`, '거절', ButtonStyle.Danger))];
+          components = [row(button(`ui:event:${event.id}`,'이벤트·상품 확인'),button(`eapprove:${event.id}`, '승인·시작', ButtonStyle.Success), button(`ereject:${event.id}`, '거절', ButtonStyle.Danger))];
           break;
         case 'start':
           content = JSON.parse(this.store.guild(event.guild_id).mention_roles).map(id => `<@&${id}>`).join(' ');
@@ -139,29 +143,29 @@ export class DiscordTransport {
           return await channel.send({ ...this.publicEvent(event,roles),allowedMentions: { parse: [], users, roles }, nonce: nonce(job.id), enforceNonce: true });
         case 'winner':
           content = `<@${claim.user_id}>`; users.push(claim.user_id);
-          embed.setTitle(`${event.title} 당첨`).setDescription(`축하합니다! 아래 버튼으로 수령해주세요.\n당첨 번호: \`${claim.id}\`\n자리: ${claim.slot}\n전달 방식: ${isDirect(this.store,event.id,claim.slot)?'실물·직접 전달 (주최자 연락 안내)':'디지털 자동 전달'}\n수령 기한: ${time(Date.now() + event.claim_ms)}${event.proof_required ? '\n수령 클릭 후 5분 내 인증 자료 제출이 필요해요.' : ''}`);
+          embed.setTitle(`${event.title} 당첨`).setDescription(`축하합니다! 아래 버튼으로 수령해주세요.\n${claim.slot}번 상품: **${productInfo(this.store,this.vault,event,claim.slot).name}**\n당첨 번호: \`${claim.id}\`\n전달 방식: ${isDirect(this.store,event.id,claim.slot)?'실물·직접 전달 (주최자 연락 안내)':'디지털 자동 전달'}\n수령 기한: ${time(Date.now() + event.claim_ms)}${event.proof_required ? '\n수령 클릭 후 5분 내 인증 자료 제출이 필요해요.' : ''}`);
           components = [row(button(`claim:${claim.id}`, '수령', ButtonStyle.Success))];
           break;
         case 'proof':
-          embed.setTitle('주최자 인증 검수 요청').setDescription(`상품: ${event.title}\n당첨 번호: \`${claim.id}\`\n당첨자: <@${claim.user_id}>\n제출 버전: ${claim.proof_version}\n아래 버튼으로 자료를 확인하고 승인·보완 요청·거절을 진행해주세요.\nDM을 사용할 수 없으면 서버 안내의 내 신청 → 내 이벤트 인증 대기에서도 확인할 수 있어요.`);
+          embed.setTitle('주최자 인증 검수 요청').setDescription(`이벤트: ${event.title}\n${claim.slot}번 상품: ${productInfo(this.store,this.vault,event,claim.slot,true).name}\n당첨 번호: \`${claim.id}\`\n당첨자: <@${claim.user_id}>\n제출 버전: ${claim.proof_version}\n아래 버튼으로 자료를 확인하고 승인·보완 요청·거절을 진행해주세요.\nDM을 사용할 수 없으면 서버 안내의 내 신청 → 내 이벤트 인증 대기에서도 확인할 수 있어요.`);
           components = [row(button(`pview:${claim.id}`, '인증 자료 확인·검수'))];
           break;
         case 'rework': {
           const feedback = claim.feedback ? this.vault.open(claim.feedback, `feedback:${claim.id}`).text : '자료를 보완해주세요.';
-          embed.setTitle('인증 보완 요청').setDescription(`${feedback}\n\n상품: ${event.title}\n당첨 번호: \`${claim.id}\`\n재제출 기한: ${time(claim.submit_deadline)}\n아래 보완 제출 버튼으로 이 DM에서 사진·메시지를 다시 제출할 수 있어요.`);
+          embed.setTitle('인증 보완 요청').setDescription(`${feedback}\n\n이벤트: ${event.title}\n${claim.slot}번 상품: ${productInfo(this.store,this.vault,event,claim.slot,true).name}\n당첨 번호: \`${claim.id}\`\n재제출 기한: ${time(claim.submit_deadline)}\n아래 보완 제출 버튼으로 이 DM에서 사진·메시지를 다시 제출할 수 있어요.`);
           components=[row(button(`ui:proofupload:${claim.id}:${claim.proof_version}`,'보완 제출',ButtonStyle.Success),button(`proofstatus:${claim.id}`,'상태 확인',ButtonStyle.Secondary))];
           break;
         }
         case 'denied': embed.setTitle('인증 거절').setDescription(`이벤트: ${event.title}\n당첨 번호: ${claim.id}\n해당 당첨 자리는 리롤됩니다.`); break;
         case 'expired': embed.setTitle('당첨 자리 리롤').setDescription(`이벤트: ${event.title}\n당첨 번호: ${claim.id}\n기존 당첨이 종료되어 해당 자리의 후보를 다시 추첨합니다.`); break;
-        case 'received': embed.setTitle(isDirect(this.store,event.id,claim.slot)?'주최자 연락 안내 완료':'상품 수령 완료').setDescription(`이벤트: ${event.title}\n당첨자: <@${claim.user_id}>\n자리: ${claim.slot}\n당첨 번호: ${claim.id}`); break;
+        case 'received': embed.setTitle(isDirect(this.store,event.id,claim.slot)?'주최자 연락 안내 완료':'상품 수령 완료').setDescription(`이벤트: ${event.title}\n${claim.slot}번 상품: ${productInfo(this.store,this.vault,event,claim.slot).name}\n당첨자: <@${claim.user_id}>\n당첨 번호: ${claim.id}`); break;
         case 'deliveryIssue': embed.setTitle('상품 전달 상태 확인 필요').setDescription(`이벤트: ${event.title}\n당첨 번호: ${claim.id}\n상태: ${statuses[claim.status]}\n실패 건은 내 당첨의 다시 시도 버튼, 결과 불명 건은 관리자 메뉴의 지급 결과 확인 버튼을 사용해주세요.`); break;
         case 'drawIssue': embed.setTitle('추첨 지연').setDescription(`이벤트: ${event.title}\n이벤트 번호: ${event.id}\n참여자 역할 확인에 실패해 추첨을 보류했어요. 서버 접근 권한과 네트워크를 확인해주세요. 다음 주기에 재시도합니다.`); break;
-        case 'rejected': embed.setTitle('이벤트 신청 거절').setDescription(`상품: ${event.title}\n이벤트 번호: ${event.id}\n사유: ${event.rejection_reason}\n봇의 상품 원문은 삭제되었습니다.`); break;
+        case 'rejected': embed.setTitle('이벤트 신청 거절').setDescription(`이벤트: ${event.title}\n이벤트 번호: ${event.id}\n사유: ${event.rejection_reason}\n봇의 상품 원문은 삭제되었습니다.`); break;
         case 'closed': {
           const sent = this.store.get("SELECT count(*) n FROM prizes WHERE event_id=? AND status='DELIVERED'", event.id).n;
           const directSent=this.store.get("SELECT count(*) n FROM prizes WHERE event_id=? AND status='DELIVERED' AND delivery_mode='DIRECT'",event.id).n;
-          embed.setTitle(event.status === 'CANCELLED' ? '이벤트 취소' : '이벤트 마감').setDescription(`상품: ${event.title}\n이벤트 번호: ${event.id}\n처리 완료: ${sent}/${event.winner_count}\n디지털 지급 완료: ${sent-directSent}건\n실물 연락 안내 완료: ${directSent}건\n${sent < event.winner_count ? '남은 미지급 상품 원문은 삭제되었습니다.' : directSent?'실물 전달은 주최자와 당첨자가 개인 DM으로 진행합니다.':'모든 상품이 지급되었습니다.'}`);
+          embed.setTitle(event.status === 'CANCELLED' ? '이벤트 취소' : '이벤트 마감').setDescription(`이벤트: ${event.title}\n이벤트 번호: ${event.id}\n처리 완료: ${sent}/${event.winner_count}\n디지털 지급 완료: ${sent-directSent}건\n실물 연락 안내 완료: ${directSent}건\n${sent < event.winner_count ? '남은 미지급 상품 원문은 삭제되었습니다.' : directSent?'실물 전달은 주최자와 당첨자가 개인 DM으로 진행합니다.':'모든 상품이 지급되었습니다.'}`);
           break;
         }
         default: throw Object.assign(new Error('알림 종류 오류'), { definite: true });

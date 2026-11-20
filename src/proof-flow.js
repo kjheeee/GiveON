@@ -40,7 +40,7 @@ export class ProofFlow {
   hostView(context,withProof=false,inGuild=false) {
     const {guildId,actor,cid}=context,{claim,event}=this.engine.proofReviewer(guildId,actor,cid);
     const direct=this.engine.direct(event.id,claim.slot);
-    let text=`**${event.title} · 인증 검수**\n당첨자: <@${claim.user_id}>\n자리: ${claim.slot}\n전달 방식: ${direct?'실물·직접 전달':'디지털 자동 전달'}\n상태: **${claim.status==='DELIVERED'&&direct?'주최자 연락 안내 완료':statuses[claim.status]}**\n당첨 번호: ${cid}`;
+    let text=`**${event.title} · 인증 검수**\n당첨자: <@${claim.user_id}>\n${claim.slot}번 상품: ${this.engine.product(event,claim.slot,true).name}\n전달 방식: ${direct?'실물·직접 전달':'디지털 자동 전달'}\n상태: **${claim.status==='DELIVERED'&&direct?'주최자 연락 안내 완료':statuses[claim.status]}**\n당첨 번호: ${cid}`;
     const actions=[],value=payload(text);
     if(claim.status==='REVIEW') {
       actions.push(btn(`pview:${cid}`,'인증 자료 보기',ButtonStyle.Primary),btn(`papprove:${cid}:${claim.proof_version}`,'승인·자동 지급',ButtonStyle.Success),
@@ -58,7 +58,7 @@ export class ProofFlow {
   }
   winnerView(context,inGuild=false) {
     const {claim,event}=this.engine.claim(context.cid,context.guildId),actions=[];
-    let text=`**${event.title} · 인증 제출**\n당첨 번호: ${claim.id}\n상태: **${claim.status==='DELIVERED'&&this.engine.direct(event.id,claim.slot)?'주최자 연락 안내 완료':statuses[claim.status]}**`;
+    let text=`**${event.title} · 인증 제출**\n${claim.slot}번 상품: ${this.engine.product(event,claim.slot,true).name}\n당첨 번호: ${claim.id}\n상태: **${claim.status==='DELIVERED'&&this.engine.direct(event.id,claim.slot)?'주최자 연락 안내 완료':statuses[claim.status]}**`;
     if(claim.status==='SUBMITTING') {
       text+=`\n제출 기한: ${time(claim.submit_deadline)}`;
       if(claim.feedback)text+=`\n보완 요청: ${this.engine.vault.open(claim.feedback,`feedback:${claim.id}`).text}`;
@@ -82,7 +82,7 @@ export class ProofFlow {
         const {claim,event}=this.engine.claim(cid,guildId);
         check(claim.status==='SUBMITTING'&&claim.submit_deadline>this.engine.now(),'인증 제출 가능 시간이 아니에요.');
         if(parts[3]!==undefined)check(claim.proof_version===number(parts[3]),'보완 요청이 갱신됐어요. 상태 확인 후 다시 제출해주세요.');
-        return await i.showModal(contentModal(`form:proof:${cid}:${claim.proof_version}`,'인증 자료 제출',null,event.proof_instructions));
+        return await i.showModal(contentModal(`form:proof:${cid}:${claim.proof_version}`,'인증 자료 제출',null,`${claim.slot}번 상품: ${this.engine.product(event,claim.slot,true).name}\n${event.proof_instructions}`));
       }
       await this.defer(i);
       if(i.isModalSubmit()&&action==='proof') {

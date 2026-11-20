@@ -15,7 +15,7 @@ function setup(t){
 function request(user,id,fields={},type='button'){
   return{customId:id,guildId:GUILD,user:{id:user.userId,bot:false},replies:[],
     inGuild:()=>true,isChatInputCommand:()=>false,isButton:()=>type==='button',isModalSubmit:()=>type==='modal',isAnySelectMenu:()=>type==='select',values:fields.values||[],
-    fields:{getTextInputValue:key=>fields[key]||'',getUploadedFiles:()=>null},
+    fields:{getTextInputValue:key=>fields[key]||'',getStringSelectValues:key=>[fields[key]||'public'],getUploadedFiles:()=>null},
     async deferReply(options){this.deferred=true;this.deferOptions=options;},async editReply(value){this.replies.push(value);},async reply(value){this.replied=true;this.replies.push(value);},async showModal(value){this.modal=value;this.replied=true;}};
 }
 function template(f){
@@ -62,7 +62,7 @@ test('미등록·겹치는 역할의 템플릿을 막고 중지·타 서버 템�
 
 test('템플릿 변경은 재확인하게 하며 다시 선택해도 입력 시간과 등록 상품은 보존한다',t=>{
   const f=setup(t),tid=template(f),eid=f.engine.create(GUILD,HOST,{...options,templateId:tid});
-  for(const slot of [1,2])f.engine.setPrize(GUILD,HOST,eid,slot,content('PRIVATE-'+slot));
+  for(const slot of [1,2]){f.engine.setProductInfo(GUILD,HOST,eid,slot,`상품 ${slot}`,true);f.engine.setPrize(GUILD,HOST,eid,slot,content('PRIVATE-'+slot));}
   const secret=Buffer.from(f.store.get('SELECT secret FROM prizes WHERE event_id=? AND slot=1',eid).secret);
   f.engine.updateTemplate(GUILD,MANAGER,tid,{description:'변경된 공개 문구'});assert.throws(()=>f.engine.submit(GUILD,HOST,eid),/변경/);
   f.engine.applyTemplate(GUILD,HOST,eid,tid);const e=f.store.event(eid);
@@ -76,6 +76,7 @@ test('직접 신청은 조건→인증→상품1→상품2→최종확인으로 
   const e=f.store.get('SELECT * FROM events WHERE owner_id=?',HOST.userId);assert.match(create.replies[0].content,/2\/5/);
   const next=request(HOST,`flow:step:${e.id}:verification`);await f.handle(next);assert.match(next.replies[0].content,/3\/5/);
   const noProof=request(HOST,`flow:noproof:${e.id}`);await f.handle(noProof);assert.match(noProof.replies[0].content,/4\/5/);
+  for(const slot of [1,2]){const info=request(HOST,`form:product:${e.id}:${slot}`,{name:`상품 ${slot}`,visibility:'public'},'modal');await f.handle(info);}
   const open=request(HOST,`flow:prize:${e.id}:1`);await f.handle(open);const form=open.modal.toJSON();assert.equal(form.custom_id,`form:prize:${e.id}:1`);assert.equal(form.components.some(c=>c.component?.custom_id==='slot'),false);
   const one=request(HOST,`form:prize:${e.id}:1`,{text:'SECRET-ONE'},'modal');await f.handle(one);assert.match(one.replies[0].content,/2번/);
   const resumed=await new DraftFlow(f.engine,f.transport).view(GUILD,HOST,e.id);assert.match(resumed.content,/2번/);

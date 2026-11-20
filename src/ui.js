@@ -12,7 +12,7 @@ const input = (id,label,max=100,paragraph=false,required=true,value) => {
 };
 export function createModal(event=null) {
   return new ModalBuilder().setCustomId(event?`form:details:${event.id}`:'form:create').setTitle('1/5 · 이벤트 기본 정보').addLabelComponents(
-    input('title','상품명',100,false,true,event?.title), input('description','상세 설명',1800,true,true,event?.description),
+    input('title','이벤트명',100,false,true,event?.title), input('description','상세 설명',1800,true,true,event?.description),
     input('duration','이벤트 진행 시간 (분)',5,false,true,String(event?event.duration_ms/60000:60)),
     input('claim','당첨 후 수령 제한시간 (분)',5,false,true,String(event?event.claim_ms/60000:30)),
     input('winners','당첨 인원 / 등록할 상품 수',3,false,true,String(event?.winner_count||1)),
@@ -21,7 +21,13 @@ export function createModal(event=null) {
 export function templateCreateModal(template,event=null) {
   return new ModalBuilder().setCustomId(event?`form:templatedetails:${event.id}`:`form:templatecreate:${template.id}`).setTitle('이벤트 기본 정보')
     .addTextDisplayComponents(new TextDisplayBuilder().setContent(`**${template.name}**\n${template.description}\n\n등록된 참여·차단 역할과 인증 설정이 함께 적용됩니다.`))
-    .addLabelComponents(input('title','상품명',100,false,true,event?.title),input('duration','진행 시간 (분)',5,false,true,String(event?event.duration_ms/60000:60)),input('claim','수령 제한시간 (분)',5,false,true,String(event?event.claim_ms/60000:30)),input('winners','당첨 인원',3,false,true,String(event?.winner_count||1)));
+    .addLabelComponents(input('title','이벤트명',100,false,true,event?.title),input('duration','진행 시간 (분)',5,false,true,String(event?event.duration_ms/60000:60)),input('claim','수령 제한시간 (분)',5,false,true,String(event?event.claim_ms/60000:30)),input('winners','당첨 인원',3,false,true,String(event?.winner_count||1)));
+}
+export function productModal(event,product) {
+  return new ModalBuilder().setCustomId(`form:product:${event.id}:${product.slot}`).setTitle(`${product.slot}번 상품 정보`)
+    .addLabelComponents(input('name','상품명 (당첨자에게는 항상 표시)',100,false,true,product.named?product.name:undefined),
+      new LabelBuilder().setLabel('공개 목록에 상품명을 표시할까요?').setStringSelectMenuComponent(new StringSelectMenuBuilder().setCustomId('visibility').setRequired(true).setMinValues(1).setMaxValues(1)
+        .addOptions({label:'공개',value:'public',default:product.publicName},{label:'비공개 · 당첨자와 관리 화면에만 표시',value:'private',default:!product.publicName})));
 }
 export function templateMetaModal(template=null) {
   return new ModalBuilder().setCustomId(template?`form:templatemeta:${template.id}`:'form:templatenew').setTitle('안내 템플릿')
@@ -34,7 +40,7 @@ export function templateProofModal(template) {
 export function contentModal(id,title,slot=null,instructions='') {
   const modal = new ModalBuilder().setCustomId(id).setTitle(title);
   if(instructions) modal.addTextDisplayComponents(new TextDisplayBuilder().setContent(instructions));
-  if (slot !== null) modal.addLabelComponents(input('slot','상품 자리 번호',3,false,true,String(slot)));
+  if (slot !== null) modal.addLabelComponents(input('slot','상품 번호',3,false,true,String(slot)));
   return modal.addLabelComponents(
     input('text',id.startsWith('form:proof:')?'인증 메시지 (사진만 제출해도 됩니다)':'전달할 메시지 (이미지만 첨부해도 됩니다)',1800,true,false),
     new LabelBuilder().setLabel('이미지 첨부').setDescription('최대 2장, 합계 8MiB. PNG·JPG·GIF·WebP')
@@ -48,7 +54,7 @@ export function proofSettingsModal(event) {
   return new ModalBuilder().setCustomId(`form:proofsettings:${event.id}`).setTitle('수령 전 인증 설정')
     .addLabelComponents(input('instructions','인증 안내 (비우면 인증 없이 수령)',1000,true,false,event.proof_instructions));
 }
-export function slotModal(id,title) { return new ModalBuilder().setCustomId(id).setTitle(title).addLabelComponents(input('slot','상품 자리 번호',3)); }
+export function slotModal(id,title) { return new ModalBuilder().setCustomId(id).setTitle(title).addLabelComponents(input('slot','상품 번호',3)); }
 export function roleMenu(id,placeholder,roles=[]) {
   const menu = new RoleSelectMenuBuilder().setCustomId(id).setPlaceholder(placeholder).setMinValues(0).setMaxValues(20);
   if (roles.length) menu.setDefaultRoles(...roles);
@@ -90,7 +96,7 @@ export function eventView(engine,transport,guildId,actor,eventId,page=0) {
   if (manager) management.push(btn(`ui:eventclaims:${eventId}:0`,'당첨 관리'));
   if ((own||manager) && !['COMPLETED','CANCELLED'].includes(event.status)) management.push(btn(`ui:cancel:${eventId}`,'이벤트 취소',ButtonStyle.Danger));
   if (management.length) components.push(row(...management));
-  const embed=transport.eventEmbed(event);
+  const embed=transport.eventEmbed(event,{revealPrivate:own||manager});
   if(event.public_message_id) {
     const people=engine.participants(guildId,actor,eventId,page);
     embed.addFields({name:`참여자 목록 · 총 ${people.total}명 · ${people.page+1}/${people.pages}페이지`,
@@ -100,12 +106,13 @@ export function eventView(engine,transport,guildId,actor,eventId,page=0) {
     if(people.page+1<people.pages)nav.push(btn(`ui:event:${eventId}:${people.page+1}`,'다음',ButtonStyle.Secondary));
     nav.push(btn(`ui:event:${eventId}:${people.page}`,'새로고침',ButtonStyle.Secondary));components.push(row(...nav));
   }
+  components.push(row(btn(`ui:products:${eventId}:0`,'상품 목록',ButtonStyle.Secondary)));
   components.push(back());
   return payload(`이벤트 번호: ${eventId}${own||manager ? `\n보관 중인 상품: ${count}건` : ''}${event.rejection_reason ? `\n거절 사유: ${event.rejection_reason}` : ''}`,components,[embed]);
 }
 export function claimView(engine,guildId,actor,claimId,managerView=false) {
   const {claim,event}=engine.claim(claimId,guildId);
-  let description=`**${event.title}**\n당첨 번호: ${claim.id}\n자리: ${claim.slot}\n상태: **${claim.status==='DELIVERED'&&engine.direct(event.id,claim.slot)?'주최자 연락 안내 완료':statuses[claim.status]}**`;
+  let description=`**${event.title}**\n당첨 번호: ${claim.id}\n${claim.slot}번 상품: **${engine.product(event,claim.slot,true).name}**\n상태: **${claim.status==='DELIVERED'&&engine.direct(event.id,claim.slot)?'주최자 연락 안내 완료':statuses[claim.status]}**`;
   const actions=[];
   if (!managerView) {
     if (claim.status==='CLAIMABLE') { description+=`\n수령 기한: ${time(claim.claim_deadline)}`; actions.push(btn(`claim:${claimId}`,'수령',ButtonStyle.Success)); }
@@ -125,4 +132,12 @@ export function claimView(engine,guildId,actor,claimId,managerView=false) {
   const components=actions.length ? [row(...actions)] : [];
   components.push(back());
   return payload(description,components);
+}
+
+export function productsView(engine,guildId,actor,eventId,page=0){
+  const data=engine.products(guildId,actor,eventId,page),nav=[];
+  if(data.page>0)nav.push(btn(`ui:products:${eventId}:${data.page-1}`,'이전',ButtonStyle.Secondary));
+  if(data.page+1<data.pages)nav.push(btn(`ui:products:${eventId}:${data.page+1}`,'다음',ButtonStyle.Secondary));
+  nav.push(btn(`ui:event:${eventId}`,'이벤트로',ButtonStyle.Secondary));
+  return payload(`**${data.event.title} · 상품 목록 (${data.page+1}/${data.pages})**\n`+data.products.map(p=>`${p.slot}번 상품: **${p.name}**\n${p.direct?'실물·직접 전달':'디지털 자동 전달'}${p.publicName?'':' · 상품명 비공개'}`).join('\n\n'),[row(...nav),back()]);
 }

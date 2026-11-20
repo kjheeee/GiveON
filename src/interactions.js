@@ -1,7 +1,7 @@
 import { ButtonStyle, MessageFlags, PermissionFlagsBits, ChannelType,StringSelectMenuBuilder } from 'discord.js';
 import { UserError } from './engine.js';
 import { readContent } from './media.js';
-import { btn, row, back, payload, createModal, contentModal, reasonModal, proofSettingsModal, roleMenu, channelMenu, listView, eventView, claimView,templateCreateModal,templateMetaModal,templateProofModal } from './ui.js';
+import { btn, row, back, payload, createModal, contentModal, reasonModal, proofSettingsModal, roleMenu, channelMenu, listView, eventView, claimView,templateCreateModal,templateMetaModal,templateProofModal,productModal,productsView } from './ui.js';
 import { statuses } from './discord-transport.js';
 import { DraftFlow } from './drafts.js';
 import { SetupFlow } from './setup.js';
@@ -115,7 +115,7 @@ export function handler(engine,transport) {
       requireThat(i.inGuild(),'이벤트가 열리는 서버에서 사용해주세요.'); engine.guard();
       const parts=(i.customId||'').split(':'),[kind,action,arg,extra]=parts;
       const command=chat?commandAction(i):null;
-      const mayOpenModal=(chat&&command==='init')||(button&&((kind==='host'&&['new','edit'].includes(action))||(kind==='setup'&&action==='open')||(kind==='ui'&&['prizeform','proofsettings'].includes(action))||['claim','ereject'].includes(kind)||(kind==='flow'&&(['details','prize'].includes(action)||(action==='custom'&&arg==='new')))||(kind==='tpl'&&['new','meta','proof'].includes(action))))||(select&&kind==='flow'&&action==='template'&&arg==='new');
+      const mayOpenModal=(chat&&command==='init')||(button&&((kind==='host'&&['new','edit'].includes(action))||(kind==='setup'&&action==='open')||(kind==='ui'&&['prizeform','proofsettings'].includes(action))||['claim','ereject'].includes(kind)||(kind==='flow'&&(['details','prize','product'].includes(action)||(action==='custom'&&arg==='new')))||(kind==='tpl'&&['new','meta','proof'].includes(action))))||(select&&kind==='flow'&&action==='template'&&arg==='new');
       const defer=()=>i.message?.flags?.has(MessageFlags.Ephemeral)&&typeof i.deferUpdate==='function' ? i.deferUpdate() : i.deferReply({flags:MessageFlags.Ephemeral});
       if(!mayOpenModal) await defer();
       a=modal&&kind==='form'&&action==='proof'?{userId:i.user.id,roles:[],isBot:i.user.bot}:await transport.member(i.guildId,i.user.id);
@@ -136,6 +136,7 @@ export function handler(engine,transport) {
           form=selected?.template_id?templateCreateModal(engine.template(selected.template_id,i.guildId),e):createModal(e);
         }
         if(kind==='flow'&&action==='template'&&arg==='new')form=templateCreateModal(engine.templateForUse(i.values[0],i.guildId));
+        if(kind==='flow'&&action==='product'){const e=draft(i.guildId,a,arg),slot=Number(extra);requireThat(Number.isInteger(slot)&&slot>=1&&slot<=e.winner_count,'상품 번호를 확인해주세요.');form=productModal(e,engine.product(e,slot,true));}
         if(kind==='flow'&&action==='prize'){
           const e=draft(i.guildId,a,arg),slot=Number(extra);requireThat(Number.isInteger(slot)&&slot>=1&&slot<=e.winner_count,'상품 자리 번호가 잘못되었어요.');
           requireThat(!engine.direct(e.id,slot),'실물 자리는 연락 안내가 자동 준비되어 디지털 상품 입력이 필요하지 않아요.');
@@ -158,7 +159,7 @@ export function handler(engine,transport) {
           const current=store.claim(cid);
           if (current.status==='SUBMITTING') {
             requireThat(current.submit_deadline>engine.now(),'인증 제출 시간이 지났어요.');
-            form=contentModal(`form:proof:${cid}:${current.proof_version}`,'인증 자료 제출',null,value.event.proof_instructions);
+            form=contentModal(`form:proof:${cid}:${current.proof_version}`,'인증 자료 제출',null,`${current.slot}번 상품: ${engine.product(value.event,current.slot,true).name}\n${value.event.proof_instructions}`);
           } else if (kind==='ui') throw new UserError('지금은 인증 자료를 제출할 수 없어요.');
         }
         if (form) return await i.showModal(form);
@@ -192,9 +193,10 @@ export function handler(engine,transport) {
           const e=draft(i.guildId,a,arg);engine.updateDraftDetails(i.guildId,a,arg,{title:i.fields.getTextInputValue('title'),description:action==='details'?i.fields.getTextInputValue('description'):e.description,durationMinutes:parseInteger(i.fields.getTextInputValue('duration')),claimMinutes:parseInteger(i.fields.getTextInputValue('claim')),winners:parseInteger(i.fields.getTextInputValue('winners'))});
           return await renderEvent(i,a,arg);
         }
+        if(action==='product'){const visibility=i.fields.getStringSelectValues('visibility')[0];requireThat(['public','private'].includes(visibility),'상품명 공개 여부를 확인해주세요.');engine.setProductInfo(i.guildId,a,arg,Number(extra),i.fields.getTextInputValue('name'),visibility==='public');return respond(i,await flow.view(i.guildId,a,arg,'items',Number(extra)));}
         if (action==='prize') {
           draft(i.guildId,a,arg);engine.setPrize(i.guildId,a,arg,extra?Number(extra):parseInteger(i.fields.getTextInputValue('slot')),await contentFromModal(i));
-          const next=store.get('SELECT slot FROM prizes WHERE event_id=? AND secret IS NULL ORDER BY slot LIMIT 1',arg)?.slot;
+          const next=store.get('SELECT slot FROM prizes WHERE event_id=? AND (secret IS NULL OR name IS NULL) ORDER BY slot LIMIT 1',arg)?.slot;
           return await respond(i,await flow.view(i.guildId,a,arg,next?'items':'review',next||1));
         }
         if (action==='proofsettings') { engine.setProofRequirement(i.guildId,a,arg,i.fields.getTextInputValue('instructions'));return await respond(i,await flow.view(i.guildId,a,arg,'items')); }
@@ -240,7 +242,7 @@ export function handler(engine,transport) {
             return respond(i,payload(`${slot}번을 실물·직접 전달로 바꾸면 이 자리의 디지털 상품 내용을 삭제합니다. 변경할까요?`,[row(btn(`flow:modeok:${arg}:${slot}:${mode}`,'이 자리 변경 확인',ButtonStyle.Danger),btn(`flow:step:${arg}:items:${slot}`,'돌아가기',ButtonStyle.Secondary))]));
           }
           engine.setDeliveryMode(i.guildId,a,arg,slot,direct);
-          const next=direct?store.get('SELECT slot FROM prizes WHERE event_id=? AND secret IS NULL ORDER BY slot LIMIT 1',arg)?.slot:slot;
+          const next=direct?store.get('SELECT slot FROM prizes WHERE event_id=? AND (secret IS NULL OR name IS NULL) ORDER BY slot LIMIT 1',arg)?.slot:slot;
           return respond(i,await flow.view(i.guildId,a,arg,next?'items':'review',next||slot));
         }
         if(action==='choose')return respond(i,flow.choose(i.guildId,a,arg,pageNumber(extra)));
@@ -264,6 +266,7 @@ export function handler(engine,transport) {
       if (['mine','events','pending'].includes(action)) return eventsList(i,a,action,pageNumber(arg));
       if (['wins','reviews','issues'].includes(action)) return claimsList(i,a,action,pageNumber(arg));
       if (action==='eventclaims') return claimsList(i,a,action,pageNumber(extra),arg);
+      if(action==='products')return respond(i,productsView(engine,i.guildId,a,arg,pageNumber(extra)));
       if (action==='event') return await renderEvent(i,a,arg,pageNumber(extra));
       if (action==='admin') return adminView(i,a);
       if (action==='channels') return settingsView(i,a);

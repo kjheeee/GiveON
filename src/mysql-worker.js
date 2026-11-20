@@ -24,6 +24,8 @@ async function initialize() {
   for(const sql of mysqlSchema.slice(1))await connection.query(sql);
   const [prizeColumns]=await connection.execute("SELECT COLUMN_NAME name FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='prizes'");
   if(!prizeColumns.some(column=>column.name==='delivery_mode'))await connection.query("ALTER TABLE prizes ADD COLUMN delivery_mode VARCHAR(16) NOT NULL DEFAULT 'DIGITAL'");
+  if(!prizeColumns.some(column=>column.name==='name'))await connection.query('ALTER TABLE prizes ADD COLUMN name BLOB');
+  if(!prizeColumns.some(column=>column.name==='name_public'))await connection.query('ALTER TABLE prizes ADD COLUMN name_public TINYINT NOT NULL DEFAULT 1');
   await connection.beginTransaction();
   try {
     await connection.query("UPDATE prizes SET delivery_mode='DIRECT' WHERE event_id IN (SELECT event_id FROM direct_events)");

@@ -33,7 +33,7 @@ export function interaction(user,customId,options={},type='button') {
   return {guildId:GUILD,user:{id:user.userId,bot:false},customId,deferred:false,replies:[],
     commandName:type==='chat'?'gon':undefined,options:{getSubcommandGroup:()=>options.group||null,getSubcommand:()=>customId,getString:key=>options[key],getUser:key=>options[key]},channelId:'100000000000022',
     inGuild:()=>true,isChatInputCommand:()=>type==='chat',isButton:()=>type==='button',isModalSubmit:()=>type==='modal',isAnySelectMenu:()=>type==='select',
-    values:options.values||[],fields:{getTextInputValue:name=>options[name]||'',getUploadedFiles:()=>null},
+    values:options.values||[],fields:{getTextInputValue:name=>options[name]||'',getStringSelectValues:key=>[options[key]||'public'],getUploadedFiles:()=>null},
     async showModal(value){this.modal=value;this.replied=true;},async deferReply(options){this.deferOptions=options;this.deferred=true;},
     async deferUpdate(){this.updated=true;this.deferred=true;},async editReply(options){this.replies.push(options);},async reply(options){this.replies.push(options);this.replied=true;}};
 }
@@ -79,7 +79,7 @@ export function fixture(t, suppliedStore) {
     advance(ms) { clock += ms; }, now: () => clock,
     async event({ winners = 1, proof = false, participants = [], start = true } = {}) {
       const eventId = engine.create(GUILD, HOST, { title: '테스트 상품', description: '테스트 설명', durationMinutes: 1, claimMinutes: 1, winners, proofRequired: proof, proofInstructions: proof ? '필요한 정보만 제출하세요' : '' });
-      for (let slot = 1; slot <= winners; slot++) engine.setPrize(GUILD, HOST, eventId, slot, content(`상품-${eventId}-${slot}`));
+      for (let slot = 1; slot <= winners; slot++) {engine.setProductInfo(GUILD,HOST,eventId,slot,`상품 ${slot}`,true);engine.setPrize(GUILD, HOST, eventId, slot, content(`상품-${eventId}-${slot}`));}
       if (!start) return eventId;
       engine.submit(GUILD, HOST, eventId);
       await engine.tick();

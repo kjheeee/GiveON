@@ -6,6 +6,7 @@ import { PROOF_MS, Engine } from '../src/engine.js';
 test('당첨 인원만큼 사전 등록해야 신청할 수 있고 관리자는 원문을 변경·회수할 수 없다', async t => {
   const f = fixture(t);
   const eid = f.engine.create(GUILD, HOST, { title: '상품', description: '설명', durationMinutes: 1, claimMinutes: 1, winners: 2 });
+  for(const slot of [1,2])f.engine.setProductInfo(GUILD,HOST,eid,slot,`상품 ${slot}`,true);
   f.engine.setPrize(GUILD, HOST, eid, 1, content());
   assert.throws(() => f.engine.submit(GUILD, HOST, eid), /모두 등록/);
   assert.throws(() => f.engine.setPrize(GUILD, MANAGER, eid, 2, content()), /주최자만/);

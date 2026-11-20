@@ -15,7 +15,7 @@ export class ModerationFlow {
     let text=`**${event.title} · 기록 검색**\n이벤트: ${event.id}\n주최자: <@${event.owner_id}>\n이벤트 상태: ${statuses[event.status]}`;
     if(url)text+=`\n[원 이벤트](${url})`;
     if(claim){
-      text+=`\n당첨 번호: ${claim.id}\n당첨자: <@${claim.user_id}>\n자리: ${claim.slot}\n처리 상태: ${claim.status==='DELIVERED'&&this.engine.direct(event.id,claim.slot)?'주최자 연락 안내 완료':statuses[claim.status]}`;
+      text+=`\n당첨 번호: ${claim.id}\n당첨자: <@${claim.user_id}>\n${claim.slot}번 상품: ${this.engine.product(event,claim.slot,true).name}\n처리 상태: ${claim.status==='DELIVERED'&&this.engine.direct(event.id,claim.slot)?'주최자 연락 안내 완료':statuses[claim.status]}`;
       if(claim.completed_at)text+=`\n전달 완료: ${time(claim.completed_at)}`;
       if(claim.user_id===a.userId&&claim.dm_channel_id&&claim.dm_message_id)text+=`\n[본인 수령 DM](https://discord.com/channels/@me/${claim.dm_channel_id}/${claim.dm_message_id})`;
       if(audit.length)text+='\n\n최근 처리 기록\n'+audit.map(x=>`${time(x.created_at)} · ${x.action}`).join('\n');

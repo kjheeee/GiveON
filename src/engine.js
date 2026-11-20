@@ -1,6 +1,6 @@
 import { randomBytes } from 'node:crypto';
 import { draw } from './draw.js';
-import { isDirect,deliverySummary } from './delivery.js';
+import { isDirect,deliverySummary,productInfo } from './delivery.js';
 
 export const PROOF_MS = 5 * 60_000;
 export const HOST_NOTICE_KINDS = new Set(['hostCreated','hostStarted','hostReceived']);
@@ -132,7 +132,7 @@ export class Engine {
     this.requireHostAllowed(guildId,actor.userId);
     const template=options.templateId?this.templateForUse(options.templateId,guildId):null;
     const { title, description, durationMinutes, claimMinutes, winners, proofRequired = false, proofInstructions = '' } = template?{...options,description:template.description,proofRequired:Boolean(template.proof_required),proofInstructions:template.proof_instructions}:options;
-    if (!title?.trim() || title.length > 100 || !description?.trim() || description.length > 1800) fail('상품명은 100자, 설명은 1,800자 이내로 입력해주세요.');
+    if (!title?.trim() || title.length > 100 || !description?.trim() || description.length > 1800) fail('이벤트명은 100자, 설명은 1,800자 이내로 입력해주세요.');
     if (!Number.isInteger(winners) || winners < 1 || winners > 100) fail('당첨 인원은 1~100명이에요.');
     if (!Number.isInteger(durationMinutes) || durationMinutes < 1 || durationMinutes > 43200) fail('진행 시간은 1분~30일이에요.');
     if (!Number.isInteger(claimMinutes) || claimMinutes < 1 || claimMinutes > 10080) fail('수령 시간은 1분~7일이에요.');
@@ -170,7 +170,7 @@ export class Engine {
     if(event.owner_id!==actor.userId||event.status!=='DRAFT') fail('본인의 초안에서만 기본 정보를 바꿀 수 있어요.');
     const {title,durationMinutes,claimMinutes,winners}=options;
     const description=this.store.get('SELECT template_id FROM draft_steps WHERE event_id=?',eventId)?.template_id?event.description:options.description;
-    if(!title?.trim()||title.length>100||!description?.trim()||description.length>1800) fail('상품명은 100자, 설명은 1,800자 이내로 입력해주세요.');
+    if(!title?.trim()||title.length>100||!description?.trim()||description.length>1800) fail('이벤트명은 100자, 설명은 1,800자 이내로 입력해주세요.');
     if(!Number.isInteger(durationMinutes)||durationMinutes<1||durationMinutes>43200||!Number.isInteger(claimMinutes)||claimMinutes<1||claimMinutes>10080||!Number.isInteger(winners)||winners<1||winners>100) fail('시간과 당첨 인원을 올바르게 입력해주세요.');
     if(this.store.get("SELECT slot FROM prizes WHERE event_id=? AND slot>? AND secret IS NOT NULL AND delivery_mode!='DIRECT' LIMIT 1",eventId,winners)) fail('줄어드는 자리에 등록된 상품이 있어 당첨 인원을 줄일 수 없어요. 등록한 상품 내용은 유지됩니다.');
     this.store.tx(()=>{
@@ -185,10 +185,24 @@ export class Engine {
     const event = this.event(eventId, guildId);
     if (event.owner_id !== actor.userId) fail('상품 내용은 주최자만 등록할 수 있어요.');
     if (event.status !== 'DRAFT') fail('신청 전 초안에서만 상품을 등록할 수 있어요.');
-    if (!Number.isInteger(slot) || slot < 1 || slot > event.winner_count) fail('당첨 인원 안의 자리 번호를 입력해주세요.');
+    if (!Number.isInteger(slot) || slot < 1 || slot > event.winner_count) fail('당첨 인원 안의 상품 번호를 입력해주세요.');
     if(this.direct(eventId,slot))fail('직접 전달 방식은 개별 상품 대신 주최자 연락 안내를 전달해요.');
     this.validateContent(content);
     this.store.run('UPDATE prizes SET secret=? WHERE event_id=? AND slot=?', this.vault.seal(content, `prize:${eventId}:${slot}`), eventId, slot);
+  }
+  setProductInfo(guildId,actor,eventId,slot,name,publicName) {
+    this.guard();const event=this.event(eventId,guildId);
+    if(event.owner_id!==actor.userId||event.status!=='DRAFT')fail('본인의 초안에서만 상품 정보를 바꿀 수 있어요.');
+    if(!Number.isInteger(slot)||slot<1||slot>event.winner_count||typeof name!=='string'||!name.trim()||name.length>100||typeof publicName!=='boolean')fail('상품 번호·상품명(1~100자)·공개 여부를 확인해주세요.');
+    this.store.run('UPDATE prizes SET name=?,name_public=? WHERE event_id=? AND slot=?',this.vault.seal({text:name.trim()},`product-name:${eventId}:${slot}`),Number(publicName),eventId,slot);
+  }
+  product(event,slot,revealPrivate=false){return productInfo(this.store,this.vault,event,slot,revealPrivate);}
+  products(guildId,actor,eventId,page=0){
+    this.guard();const event=this.visibleEvent(guildId,actor,eventId);
+    if(!Number.isSafeInteger(page)||page<0)fail('상품 목록 페이지를 확인해주세요.');
+    const pages=Math.max(1,Math.ceil(event.winner_count/10)),current=Math.min(page,pages-1),reveal=event.owner_id===actor.userId||this.manager(guildId,actor);
+    const products=this.store.all('SELECT slot FROM prizes WHERE event_id=? ORDER BY slot LIMIT 10 OFFSET ?',eventId,current*10).map(p=>this.product(event,p.slot,reveal));
+    return {event,products,page:current,pages};
   }
   setCondition(guildId, actor, eventId, type, roleId, remove = false) {
     this.guard();
@@ -215,6 +229,7 @@ export class Engine {
     this.validateConditionPair(guildId,list(event.allow_roles),list(event.deny_roles));
     this.validateEventTemplate(event);
     if (this.store.get('SELECT count(*) n FROM prizes WHERE event_id=? AND secret IS NOT NULL', eventId).n !== event.winner_count) fail('당첨 인원만큼 상품 전달 내용을 모두 등록해주세요.');
+    if(this.store.get('SELECT count(*) n FROM prizes WHERE event_id=? AND name IS NOT NULL',eventId).n!==event.winner_count)fail('모든 상품의 상품명과 공개 여부를 입력해주세요.');
     this.store.tx(() => {
       this.store.run("UPDATE events SET status='PENDING' WHERE id=?", eventId);
       this.store.queue('application', eventId, this.now());
