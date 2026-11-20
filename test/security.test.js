@@ -81,8 +81,14 @@ test('SQLite 재개방·암호화·실제 삭제·실행 잠금 검증', async t
   const proofBlob = Buffer.from(store.claim(c.id).proof);
   assert.equal(readFileSync(path).includes(Buffer.from('PRIVATE-PROOF-STRING')), false);
   store.run('DROP TABLE panels'); // 이전 배포본에는 패널 테이블이 없었습니다.
+  store.run('DROP TABLE guild_time_limits'); // 시간 범위 기능 이전의 DB도 기존 자료를 보존해 엽니다.
   store.close(); store = new Store(path);
   assert.ok(store.get("SELECT name FROM sqlite_master WHERE type='table' AND name='panels'"));
+  assert.ok(store.get("SELECT name FROM sqlite_master WHERE type='table' AND name='guild_time_limits'"));
+  const limits={duration_min:10,duration_max:120,claim_min:5,claim_max:30};
+  fixture(t,store).engine.setTimeLimits(GUILD,actor(1),limits);
+  store.close();store=new Store(path);
+  assert.deepEqual(fixture(t,store).engine.timeLimits(GUILD),limits);
   assert.equal(store.claim(c.id).status, 'REVIEW');
   assert.equal(store.claim(c.id).proof_version, 1);
   assert.equal(store.get('PRAGMA secure_delete').secure_delete, 1);

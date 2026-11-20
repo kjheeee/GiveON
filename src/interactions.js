@@ -1,7 +1,8 @@
 import { ButtonStyle, MessageFlags, PermissionFlagsBits, ChannelType,StringSelectMenuBuilder } from 'discord.js';
 import { UserError } from './engine.js';
 import { readContent } from './media.js';
-import { btn, row, back, payload, createModal, contentModal, reasonModal, proofSettingsModal, roleMenu, channelMenu, listView, eventView, claimView,templateCreateModal,templateMetaModal,templateProofModal,productModal,productsView } from './ui.js';
+import { btn, row, back, payload, createModal, contentModal, reasonModal, proofSettingsModal, roleMenu, channelMenu, listView, eventView, claimView,templateCreateModal,templateMetaModal,templateProofModal,productModal,productsView,timeLimitsModal } from './ui.js';
+import { timeLimitsText } from './time-limits.js';
 import { statuses } from './discord-transport.js';
 import { DraftFlow } from './drafts.js';
 import { SetupFlow } from './setup.js';
@@ -70,15 +71,15 @@ export function handler(engine,transport) {
       row(btn('tpl:list:0','템플릿'),btn('ui:events:0','전체 이벤트'),btn('ui:issues:0','지급 결과 확인')),back(),
     ]));
   }
-  function settingsView(i,a,key='condition_roles') {
+  function settingsView(i,a,key='condition_roles',notice='') {
     engine.requireManager(i.guildId,a);
     requireThat(Object.hasOwn(ROLES,key),'지원하지 않는 역할 설정이에요.');
     if(key==='manager_roles')requireThat(engine.owner(a),'관리 역할은 봇 소유자만 설정할 수 있어요.');
     const s=store.guild(i.guildId);
-    return respond(i,payload(`**서버 설정**\n채널과 역할을 여기서 바로 선택하세요. 선택 즉시 저장됩니다.\n현재 역할 설정: **${ROLES[key]}**${key==='condition_roles'?'\n참여 가능·차단 조건에 표시할 후보 목록입니다.':''}`, [
+    return respond(i,payload(`**서버 설정**${notice?`\n${notice}`:''}\n채널과 역할을 여기서 바로 선택하세요. 선택 즉시 저장됩니다.\n현재 역할 설정: **${ROLES[key]}**${key==='condition_roles'?'\n참여 가능·차단 조건에 표시할 후보 목록입니다.':''}\n시간 범위: **${timeLimitsText(engine.timeLimits(i.guildId))}**\n시간 범위 버튼에서 최소·최대를 설정할 수 있어요.`, [
       channelMenu('event_channel','이벤트 공개 채널',s.event_channel,key),channelMenu('manager_channel','이벤트 승인 채널',s.manager_channel,key),
       row(new StringSelectMenuBuilder().setCustomId('ui:settingskind').setPlaceholder('설정할 역할 종류').addOptions(Object.entries(ROLES).filter(([name])=>name!=='manager_roles'||engine.owner(a)).map(([name,label])=>({label,value:name,default:name===key})))),
-      roleMenu(`ui:roleset:${key}`,ROLES[key],JSON.parse(s[key])),row(btn('ui:admin','관리자로',ButtonStyle.Secondary)),
+      roleMenu(`ui:roleset:${key}`,ROLES[key],JSON.parse(s[key])),row(btn('ui:timelimits','시간 범위'),btn('ui:admin','관리자로',ButtonStyle.Secondary)),
     ]));
   }
   async function configureChannel(i,a,key,roleKind='condition_roles') {
@@ -116,7 +117,7 @@ export function handler(engine,transport) {
       requireThat(i.inGuild(),'이벤트가 열리는 서버에서 사용해주세요.'); engine.guard();
       const parts=(i.customId||'').split(':'),[kind,action,arg,extra]=parts;
       const command=chat?commandAction(i):null;
-      const mayOpenModal=(chat&&command==='init')||(button&&((kind==='host'&&['new','edit'].includes(action))||(kind==='setup'&&action==='open')||(kind==='ui'&&['prizeform','proofsettings'].includes(action))||['claim','ereject'].includes(kind)||(kind==='flow'&&(['details','prize','product'].includes(action)||(action==='custom'&&arg==='new')))||(kind==='tpl'&&['new','meta','proof'].includes(action))))||(select&&kind==='flow'&&action==='template'&&arg==='new');
+      const mayOpenModal=(chat&&command==='init')||(button&&((kind==='host'&&['new','edit'].includes(action))||(kind==='setup'&&action==='open')||(kind==='ui'&&['prizeform','proofsettings','timelimits'].includes(action))||['claim','ereject'].includes(kind)||(kind==='flow'&&(['details','prize','product'].includes(action)||(action==='custom'&&arg==='new')))||(kind==='tpl'&&['new','meta','proof'].includes(action))))||(select&&kind==='flow'&&action==='template'&&arg==='new');
       const defer=()=>i.message?.flags?.has(MessageFlags.Ephemeral)&&typeof i.deferUpdate==='function' ? i.deferUpdate() : i.deferReply({flags:MessageFlags.Ephemeral});
       if(!mayOpenModal) await defer();
       a=modal&&kind==='form'&&action==='proof'?{userId:i.user.id,roles:[],isBot:i.user.bot}:await transport.member(i.guildId,i.user.id);
@@ -131,12 +132,13 @@ export function handler(engine,transport) {
       // 모달은 최초 응답으로 열어야 합니다. 데이터 접근 권한은 제출 시에도 다시 확인합니다.
       if (button||select) {
         let form;
-        if(kind==='flow'&&action==='custom'&&arg==='new')form=createModal();
+        if(kind==='ui'&&action==='timelimits'){setup.requireReady(i.guildId,a);form=timeLimitsModal(engine.timeLimits(i.guildId));}
+        if(kind==='flow'&&action==='custom'&&arg==='new')form=createModal(null,engine.timeLimits(i.guildId));
         if(kind==='flow'&&action==='details'){
           const e=draft(i.guildId,a,arg),selected=store.get('SELECT template_id FROM draft_steps WHERE event_id=?',arg);
-          form=selected?.template_id?templateCreateModal(engine.template(selected.template_id,i.guildId),e):createModal(e);
+          form=selected?.template_id?templateCreateModal(engine.template(selected.template_id,i.guildId),e,engine.timeLimits(i.guildId)):createModal(e,engine.timeLimits(i.guildId));
         }
-        if(kind==='flow'&&action==='template'&&arg==='new')form=templateCreateModal(engine.templateForUse(i.values[0],i.guildId));
+        if(kind==='flow'&&action==='template'&&arg==='new')form=templateCreateModal(engine.templateForUse(i.values[0],i.guildId),null,engine.timeLimits(i.guildId));
         if(kind==='flow'&&action==='product'){const e=draft(i.guildId,a,arg),slot=Number(extra);requireThat(Number.isInteger(slot)&&slot>=1&&slot<=e.winner_count,'상품 번호를 확인해주세요.');form=productModal(e,engine.product(e,slot,true));}
         if(kind==='flow'&&action==='prize'){
           const e=draft(i.guildId,a,arg),slot=Number(extra);requireThat(Number.isInteger(slot)&&slot>=1&&slot<=e.winner_count,'상품 자리 번호가 잘못되었어요.');
@@ -189,6 +191,12 @@ export function handler(engine,transport) {
       }
       if (modal) {
         requireThat(kind==='form','유효하지 않은 입력창이에요.');
+        if(action==='timelimits') {
+          setup.requireReady(i.guildId,a);
+          const values=Object.fromEntries(['duration_min','duration_max','claim_min','claim_max'].map(key=>[key,parseInteger(i.fields.getTextInputValue(key))]));
+          engine.setTimeLimits(i.guildId,a,values);
+          return settingsView(i,a,'condition_roles','시간 범위를 저장했어요.');
+        }
         if(action==='setupchannels')return await respond(i,await setup.submitChannels(i.guildId,a,arg,i.fields,await i.client.guilds.fetch(i.guildId)));
         if(action==='setuproles')return respond(i,setup.submitRoles(i.guildId,a,arg,i.fields));
         if (action==='create'||action==='templatecreate') {

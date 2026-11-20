@@ -1,6 +1,7 @@
 import { randomBytes } from 'node:crypto';
 import { draw } from './draw.js';
 import { isDirect,deliverySummary,productInfo } from './delivery.js';
+import { DEFAULT_TIME_LIMITS } from './time-limits.js';
 
 export const PROOF_MS = 5 * 60_000;
 export const HOST_NOTICE_KINDS = new Set(['hostCreated','hostStarted','hostReceived']);
@@ -127,6 +128,26 @@ export class Engine {
     }
     this.store.run(`UPDATE guilds SET ${key}=? WHERE id=?`, value, guildId);
   }
+  timeLimits(guildId) {
+    const saved=this.store.get('SELECT duration_min,duration_max,claim_min,claim_max FROM guild_time_limits WHERE guild_id=?',guildId);
+    return {...DEFAULT_TIME_LIMITS,...saved};
+  }
+  setTimeLimits(guildId,actor,limits) {
+    this.guard();this.requireManager(guildId,actor);
+    if(!limits||Object.keys(limits).length!==4||Object.keys(DEFAULT_TIME_LIMITS).some(key=>!Number.isSafeInteger(limits[key])))fail('시간 범위 네 가지를 분 단위 정수로 입력해주세요.');
+    if(limits.duration_min<1||limits.duration_max>DEFAULT_TIME_LIMITS.duration_max||limits.duration_min>limits.duration_max)fail('진행 시간은 1~43200분 안에서 최소 ≤ 최대로 설정해주세요.');
+    if(limits.claim_min<1||limits.claim_max>DEFAULT_TIME_LIMITS.claim_max||limits.claim_min>limits.claim_max)fail('수령 시간은 1~10080분 안에서 최소 ≤ 최대로 설정해주세요.');
+    this.store.guild(guildId);
+    this.store.run(`INSERT INTO guild_time_limits(guild_id,duration_min,duration_max,claim_min,claim_max,updated_by,updated_at) VALUES (?,?,?,?,?,?,?)
+      ON CONFLICT(guild_id) DO UPDATE SET duration_min=excluded.duration_min,duration_max=excluded.duration_max,claim_min=excluded.claim_min,claim_max=excluded.claim_max,updated_by=excluded.updated_by,updated_at=excluded.updated_at`,
+    guildId,limits.duration_min,limits.duration_max,limits.claim_min,limits.claim_max,actor.userId,this.now());
+  }
+  validateTimes(guildId,durationMinutes,claimMinutes,pending=false) {
+    const limits=this.timeLimits(guildId);
+    const guidance=pending?'승인 대기 신청을 취소한 뒤 다시 신청해주세요.':'기본 정보를 수정해주세요.';
+    if(!Number.isSafeInteger(durationMinutes)||durationMinutes<limits.duration_min||durationMinutes>limits.duration_max)fail(`이 서버의 진행 시간은 ${limits.duration_min}~${limits.duration_max}분이에요. ${guidance}`);
+    if(!Number.isSafeInteger(claimMinutes)||claimMinutes<limits.claim_min||claimMinutes>limits.claim_max)fail(`이 서버의 수령 시간은 ${limits.claim_min}~${limits.claim_max}분이에요. ${guidance}`);
+  }
   create(guildId, actor, options) {
     this.guard();
     this.requireHostAllowed(guildId,actor.userId);
@@ -134,8 +155,7 @@ export class Engine {
     const { title, description, durationMinutes, claimMinutes, winners, proofRequired = false, proofInstructions = '' } = template?{...options,description:template.description,proofRequired:Boolean(template.proof_required),proofInstructions:template.proof_instructions}:options;
     if (!title?.trim() || title.length > 100 || !description?.trim() || description.length > 1800) fail('이벤트명은 100자, 설명은 1,800자 이내로 입력해주세요.');
     if (!Number.isInteger(winners) || winners < 1 || winners > 100) fail('당첨 인원은 1~100명이에요.');
-    if (!Number.isInteger(durationMinutes) || durationMinutes < 1 || durationMinutes > 43200) fail('진행 시간은 1분~30일이에요.');
-    if (!Number.isInteger(claimMinutes) || claimMinutes < 1 || claimMinutes > 10080) fail('수령 시간은 1분~7일이에요.');
+    this.validateTimes(guildId,durationMinutes,claimMinutes);
     if (proofInstructions.length > 1000 || (proofRequired && !proofInstructions.trim())) fail('인증 이벤트에는 1,000자 이내 인증 안내가 필요해요.');
     this.store.guild(guildId);
     const eventId = id();
@@ -171,7 +191,8 @@ export class Engine {
     const {title,durationMinutes,claimMinutes,winners}=options;
     const description=this.store.get('SELECT template_id FROM draft_steps WHERE event_id=?',eventId)?.template_id?event.description:options.description;
     if(!title?.trim()||title.length>100||!description?.trim()||description.length>1800) fail('이벤트명은 100자, 설명은 1,800자 이내로 입력해주세요.');
-    if(!Number.isInteger(durationMinutes)||durationMinutes<1||durationMinutes>43200||!Number.isInteger(claimMinutes)||claimMinutes<1||claimMinutes>10080||!Number.isInteger(winners)||winners<1||winners>100) fail('시간과 당첨 인원을 올바르게 입력해주세요.');
+    this.validateTimes(guildId,durationMinutes,claimMinutes);
+    if(!Number.isInteger(winners)||winners<1||winners>100)fail('당첨 인원은 1~100명이에요.');
     if(this.store.get("SELECT slot FROM prizes WHERE event_id=? AND slot>? AND secret IS NOT NULL AND delivery_mode!='DIRECT' LIMIT 1",eventId,winners)) fail('줄어드는 자리에 등록된 상품이 있어 당첨 인원을 줄일 수 없어요. 등록한 상품 내용은 유지됩니다.');
     this.store.tx(()=>{
       this.store.run('UPDATE events SET title=?,description=?,duration_ms=?,claim_ms=?,winner_count=? WHERE id=?',title.trim(),description.trim(),durationMinutes*60000,claimMinutes*60000,winners,eventId);
@@ -224,6 +245,7 @@ export class Engine {
     const event = this.event(eventId, guildId);
     if (event.owner_id !== actor.userId || event.status !== 'DRAFT') fail('본인의 초안만 신청할 수 있어요.');
     this.requireHostAllowed(guildId,event.owner_id);
+    this.validateTimes(guildId,event.duration_ms/60000,event.claim_ms/60000);
     const settings = this.store.guild(guildId);
     if (!settings.manager_channel || !settings.event_channel) fail('관리자가 먼저 관리 채널과 이벤트 채널을 설정해야 해요.');
     this.validateConditionPair(guildId,list(event.allow_roles),list(event.deny_roles));
@@ -264,6 +286,7 @@ export class Engine {
     const event = this.event(eventId, guildId);
     if (event.status !== 'PENDING') fail('승인 대기 중인 이벤트가 아니에요.');
     this.requireHostAllowed(guildId,event.owner_id);
+    this.validateTimes(guildId,event.duration_ms/60000,event.claim_ms/60000,true);
     this.validateConditionPair(guildId,list(event.allow_roles),list(event.deny_roles));
     this.validateEventTemplate(event);
     this.store.tx(() => {

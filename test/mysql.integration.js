@@ -9,6 +9,14 @@ test('MySQL 워커는 부모 CLI의 input-type 옵션을 상속하지 않고 기
   assert.equal(result.status,0,result.stderr);
 });
 
+test('MySQL 기존 DB에 시간 범위 테이블을 생성하며 설정과 상품은 재기동 후에도 보존한다',async t=>{
+  const f=fixture(t),eid=await f.event({start:false}),secret=Buffer.from(f.store.get('SELECT secret FROM prizes WHERE event_id=?',eid).secret);
+  f.store.run('DROP TABLE guild_time_limits');f.store.close();
+  let store=new MySQLStore(mysqlTestOptions());t.after(()=>store.close());
+  const limits={duration_min:10,duration_max:120,claim_min:5,claim_max:30};fixture(t,store).engine.setTimeLimits(GUILD,OWNER,limits);
+  store.close();store=new MySQLStore(mysqlTestOptions());assert.deepEqual(fixture(t,store).engine.timeLimits(GUILD),limits);assert.deepEqual(store.get('SELECT secret FROM prizes WHERE event_id=?',eid).secret,secret);
+});
+
 test('MySQL은 같은 DB의 복수 연결 기동을 막고 트랜잭션 실패를 롤백한다',t=>{
   const f=fixture(t);assert.ok(f.store instanceof MySQLStore);
   assert.throws(()=>new MySQLStore(mysqlTestOptions()),/MYSQL_DATABASE_IN_USE/);

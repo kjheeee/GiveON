@@ -1,6 +1,7 @@
 import { EmbedBuilder,ButtonStyle,StringSelectMenuBuilder } from 'discord.js';
 import { UserError } from './engine.js';
 import { btn,row,back,payload,listView,conditionMenu } from './ui.js';
+import { timeLimitsText } from './time-limits.js';
 
 const roles=value=>JSON.parse(value||'[]');
 const mention=value=>roles(value).map(id=>`<@&${id}>`).join(', ')||'없음';
@@ -19,7 +20,7 @@ export class DraftFlow {
     if(page>0)buttons.push(btn(`flow:choose:${eid}:${page-1}`,'이전',ButtonStyle.Secondary));
     if(templates.length>20)buttons.push(btn(`flow:choose:${eid}:${page+1}`,'다음',ButtonStyle.Secondary));
     buttons.push(btn('ui:home','닫기',ButtonStyle.Secondary));components.push(row(...buttons));
-    return payload(`**어떤 안내로 신청할까요?**\n${templates.length?'템플릿을 고르면 안내 문구·참여 역할·차단 역할·인증이 한 번에 적용됩니다. 이벤트명·시간·인원은 직접 입력합니다.':'등록된 사전 템플릿이 없어요. 직접 설정으로 신청할 수 있습니다. 관리자는 템플릿 메뉴에서 미리 등록할 수 있어요.'}`,components);
+    return payload(`**어떤 안내로 신청할까요?**\n${templates.length?'템플릿을 고르면 안내 문구·참여 역할·차단 역할·인증이 한 번에 적용됩니다. 이벤트명·시간·인원은 직접 입력합니다.':'등록된 사전 템플릿이 없어요. 직접 설정으로 신청할 수 있습니다. 관리자는 템플릿 메뉴에서 미리 등록할 수 있어요.'}\n서버 시간 범위: ${timeLimitsText(this.engine.timeLimits(gid))}`,components);
   }
   async conditions(gid,a,eid){
     const e=this.engine.event(eid,gid);if(e.status!=='DRAFT'||(e.owner_id!==a.userId&&!this.engine.manager(gid,a)))fail('참여 조건을 설정할 권한이 없어요.');
@@ -64,7 +65,7 @@ export class DraftFlow {
       {name:'전달 방식',value:this.engine.deliverySummary(eid).label},{name:'실물·직접 전달 상품 번호',value:this.engine.deliverySummary(eid).directSlots.join(', ')||'없음'},{name:'디지털 상품 번호',value:this.engine.deliverySummary(eid).digitalSlots.join(', ')||'없음'},
     );
     if(template)embed.addFields({name:'적용 템플릿',value:template.name});
-    return payload('**5/5 · 최종 확인**\n내용을 확인하고 승인 요청을 누르세요. 상품 전달 원문은 이 화면에 표시하지 않습니다.',[
+    return payload(`**5/5 · 최종 확인**\n내용을 확인하고 승인 요청을 누르세요. 상품 전달 원문은 이 화면에 표시하지 않습니다.\n서버 시간 범위: ${timeLimitsText(this.engine.timeLimits(gid))}\n범위가 변경된 경우 기본 정보 수정에서 시간을 다시 입력해주세요.`,[
       row(btn(`ui:submit:${eid}`,'승인 요청',ButtonStyle.Success),btn(`flow:details:${eid}`,'기본 정보 수정',ButtonStyle.Secondary),btn(`flow:step:${eid}:items:1`,'상품 수정',ButtonStyle.Secondary)),
       row(btn(`flow:choose:${eid}:0`,'템플릿 변경',ButtonStyle.Secondary),...(!template?[btn(`flow:step:${eid}:conditions`,'조건·인증 수정',ButtonStyle.Secondary)]:[]),btn(`ui:products:${eid}:0`,'상품명 목록 확인',ButtonStyle.Secondary),btn(`ui:cancel:${eid}`,'신청 취소',ButtonStyle.Danger)),
     ],[embed]);

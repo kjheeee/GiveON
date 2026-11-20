@@ -85,6 +85,12 @@ export class Store extends StoreBase {
       CREATE TABLE IF NOT EXISTS notification_prefs (
         user_id TEXT PRIMARY KEY, enabled INTEGER NOT NULL DEFAULT 1, updated_at INTEGER NOT NULL
       );
+      CREATE TABLE IF NOT EXISTS guild_time_limits (
+        guild_id TEXT PRIMARY KEY REFERENCES guilds(id),
+        duration_min INTEGER NOT NULL, duration_max INTEGER NOT NULL,
+        claim_min INTEGER NOT NULL, claim_max INTEGER NOT NULL,
+        updated_by TEXT NOT NULL, updated_at INTEGER NOT NULL
+      );
       CREATE TABLE IF NOT EXISTS host_blocks (
         guild_id TEXT NOT NULL REFERENCES guilds(id), user_id TEXT NOT NULL, actor_id TEXT NOT NULL,
         created_at INTEGER NOT NULL, reason TEXT NOT NULL DEFAULT '', active INTEGER NOT NULL DEFAULT 1,
